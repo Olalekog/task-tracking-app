@@ -126,6 +126,9 @@ jobs:
       ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
       ECR_BACKEND_REPOSITORY: ${{ needs.provision-dev-ecr.outputs.backend_repository }}
       ECR_FRONTEND_REPOSITORY: ${{ needs.provision-dev-ecr.outputs.frontend_repository }}
+    outputs:
+      backend_image: ${{ steps.image-refs.outputs.backend_image }}
+      frontend_image: ${{ steps.image-refs.outputs.frontend_image }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate ECR publish configuration
@@ -205,6 +208,65 @@ jobs:
         run: |
           docker push ${{ steps.ecr-login.outputs.registry }}/$ECR_FRONTEND_REPOSITORY:$GITHUB_SHA
           docker push ${{ steps.ecr-login.outputs.registry }}/$ECR_FRONTEND_REPOSITORY:latest
+      - name: Export pushed image references
+        id: image-refs
+        run: |
+          echo "backend_image=${{ steps.ecr-login.outputs.registry }}/$ECR_BACKEND_REPOSITORY:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${{ steps.ecr-login.outputs.registry }}/$ECR_FRONTEND_REPOSITORY:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  deploy-dev:
+    name: Deploy to dev EKS
+    runs-on: ubuntu-latest
+    needs:
+      - push-images
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/dev
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
+      BACKEND_IMAGE: ${{ needs.push-images.outputs.backend_image }}
+      FRONTEND_IMAGE: ${{ needs.push-images.outputs.frontend_image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: azure/setup-kubectl@v4
+      - name: Validate deployment configuration
+        run: |
+          test -n "$AWS_REGION" || { echo "AWS_REGION is required"; exit 1; }
+          test -n "$ROLE_TO_ASSUME" || { echo "ROLE_TO_ASSUME is required"; exit 1; }
+          test -n "$BACKEND_IMAGE" || { echo "BACKEND_IMAGE is required"; exit 1; }
+          test -n "$FRONTEND_IMAGE" || { echo "FRONTEND_IMAGE is required"; exit 1; }
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+      - name: Initialize Terraform
+        run: terraform init
+      - name: Read dev cluster name
+        id: cluster
+        run: |
+          cluster_name="$(terraform output -raw cluster_name)"
+          test -n "$cluster_name" || { echo "cluster_name output is required"; exit 1; }
+          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
+      - name: Configure kubeconfig
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "${{ steps.cluster.outputs.cluster_name }}"
+      - name: Apply Kubernetes manifests
+        working-directory: ${{ github.workspace }}
+        run: kubectl apply -k k8s
+      - name: Deploy pushed images
+        working-directory: ${{ github.workspace }}
+        run: |
+          kubectl -n backend set image deployment/backend backend="$BACKEND_IMAGE"
+          kubectl -n frontend set image deployment/frontend frontend="$FRONTEND_IMAGE"
+      - name: Wait for rollouts
+        working-directory: ${{ github.workspace }}
+        run: |
+          kubectl -n database rollout status statefulset/mysql --timeout=5m
+          kubectl -n backend rollout status deployment/backend --timeout=5m
+          kubectl -n frontend rollout status deployment/frontend --timeout=5m
 
   sonarqube:
     name: SonarQube analysis
