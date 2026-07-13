@@ -66,12 +66,7 @@ Configure this GitHub repository secret:
 
 - `ROLE_TO_ASSUME`
 
-Provision the dev infrastructure with Terraform before relying on CI deployment:
+On pushes to `dev`, the workflow provisions the dev Terraform infrastructure first, including ECR and EKS, then pushes both `$GITHUB_SHA` and `latest` image tags, and finally deploys the pushed `$GITHUB_SHA` images to the dev cluster.
 
-```bash
-cd infra/terraform/environments/dev
-terraform apply -var-file=dev.tfvars
-```
-
-The workflow reads the dev ECR repository names from `dev.tfvars`, verifies those repositories and the EKS cluster exist, pushes both `$GITHUB_SHA` and `latest` tags for each image, and deploys the pushed `$GITHUB_SHA` images to the dev cluster.
+`ROLE_TO_ASSUME` must have enough permissions to manage the dev Terraform stack, including IAM roles, KMS, CloudWatch, ECR, VPC, EKS, and the AWS Load Balancer Controller.
 Task Tracking App Deployed with Kubernetes

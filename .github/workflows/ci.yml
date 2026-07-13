@@ -56,6 +56,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
       - run: terraform fmt -check -recursive ../..
       - run: terraform init -backend=false
       - run: terraform validate
@@ -118,14 +120,14 @@ jobs:
       - frontend
       - backend
       - terraform
-      - provision-dev-ecr
+      - provision-dev-infra
       - trivy
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
-      ECR_BACKEND_REPOSITORY: ${{ needs.provision-dev-ecr.outputs.backend_repository }}
-      ECR_FRONTEND_REPOSITORY: ${{ needs.provision-dev-ecr.outputs.frontend_repository }}
+      ECR_BACKEND_REPOSITORY: ${{ needs.provision-dev-infra.outputs.backend_repository }}
+      ECR_FRONTEND_REPOSITORY: ${{ needs.provision-dev-infra.outputs.frontend_repository }}
     outputs:
       backend_image: ${{ steps.image-refs.outputs.backend_image }}
       frontend_image: ${{ steps.image-refs.outputs.frontend_image }}
@@ -142,9 +144,6 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.ROLE_TO_ASSUME }}
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
       - name: Verify ECR repositories exist
         run: |
           for repository in "$ECR_BACKEND_REPOSITORY" "$ECR_FRONTEND_REPOSITORY"; do
@@ -192,6 +191,9 @@ jobs:
             echo "Trivy found CRITICAL or HIGH image vulnerabilities."
             exit 1
           fi
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
       - name: Tag backend image for ECR
         run: |
           docker tag $ECR_BACKEND_REPOSITORY:$GITHUB_SHA ${{ steps.ecr-login.outputs.registry }}/$ECR_BACKEND_REPOSITORY:$GITHUB_SHA
@@ -218,6 +220,7 @@ jobs:
     name: Deploy to dev EKS
     runs-on: ubuntu-latest
     needs:
+      - provision-dev-infra
       - push-images
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
     defaults:
@@ -226,6 +229,7 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
+      CLUSTER_NAME: ${{ needs.provision-dev-infra.outputs.cluster_name }}
       BACKEND_IMAGE: ${{ needs.push-images.outputs.backend_image }}
       FRONTEND_IMAGE: ${{ needs.push-images.outputs.frontend_image }}
     steps:
@@ -235,6 +239,7 @@ jobs:
         run: |
           test -n "$AWS_REGION" || { echo "AWS_REGION is required"; exit 1; }
           test -n "$ROLE_TO_ASSUME" || { echo "ROLE_TO_ASSUME is required"; exit 1; }
+          test -n "$CLUSTER_NAME" || { echo "CLUSTER_NAME is required"; exit 1; }
           test -n "$BACKEND_IMAGE" || { echo "BACKEND_IMAGE is required"; exit 1; }
           test -n "$FRONTEND_IMAGE" || { echo "FRONTEND_IMAGE is required"; exit 1; }
       - name: Configure AWS credentials
@@ -242,25 +247,8 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.ROLE_TO_ASSUME }}
-      - name: Initialize Terraform
-        run: terraform init
-      - name: Read dev cluster name
-        id: cluster
-        run: |
-          cluster_name="$(awk -F'"' '/^cluster_name[[:space:]]*=/{print $2}' dev.tfvars)"
-          test -n "$cluster_name" || { echo "cluster_name is required in dev.tfvars"; exit 1; }
-          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
-      - name: Verify dev EKS cluster exists
-        run: |
-          if ! aws eks describe-cluster --region "$AWS_REGION" --name "${{ steps.cluster.outputs.cluster_name }}" >/dev/null 2>&1; then
-            echo "EKS cluster '${{ steps.cluster.outputs.cluster_name }}' does not exist or this role cannot describe it."
-            echo "Provision dev infrastructure first with Terraform using an infra-capable role:"
-            echo "  cd infra/terraform/environments/dev"
-            echo "  terraform apply -var-file=dev.tfvars"
-            exit 1
-          fi
       - name: Configure kubeconfig
-        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "${{ steps.cluster.outputs.cluster_name }}"
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
       - name: Apply Kubernetes manifests
         working-directory: ${{ github.workspace }}
         run: kubectl apply -k k8s
@@ -299,13 +287,15 @@ jobs:
     steps:
       - run: echo "Approved promotion from uat to production."
 
-  provision-dev-ecr:
-    name: Resolve dev ECR repositories
+  provision-dev-infra:
+    name: Provision dev infrastructure
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    timeout-minutes: 90
     outputs:
-      backend_repository: ${{ steps.ecr-repositories.outputs.backend_repository }}
-      frontend_repository: ${{ steps.ecr-repositories.outputs.frontend_repository }}
+      backend_repository: ${{ steps.infra-outputs.outputs.backend_repository }}
+      frontend_repository: ${{ steps.infra-outputs.outputs.frontend_repository }}
+      cluster_name: ${{ steps.infra-outputs.outputs.cluster_name }}
     defaults:
       run:
         working-directory: infra/terraform/environments/dev
@@ -314,6 +304,9 @@ jobs:
       ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
     steps:
       - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
       - name: Validate AWS configuration
         run: |
           test -n "$AWS_REGION" || { echo "AWS_REGION is required"; exit 1; }
@@ -323,28 +316,22 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.ROLE_TO_ASSUME }}
-      - name: Read ECR repository names
-        id: ecr-repositories
+      - name: Initialize Terraform
+        run: terraform init
+      - name: Apply dev infrastructure
+        run: terraform apply -var-file=dev.tfvars -var='aws_assume_role_arn=' -auto-approve
+      - name: Read infrastructure outputs
+        id: infra-outputs
         run: |
-          backend_image_url="$(awk -F'"' '/^backend_image_url[[:space:]]*=/{print $2}' dev.tfvars)"
-          frontend_image_url="$(awk -F'"' '/^frontend_image_url[[:space:]]*=/{print $2}' dev.tfvars)"
+          repositories="$(terraform output -json ecr_repository_urls)"
+          backend_repository="$(echo "$repositories" | jq -r 'keys[] | select(test("backend$"))')"
+          frontend_repository="$(echo "$repositories" | jq -r 'keys[] | select(test("frontend$"))')"
+          cluster_name="$(terraform output -raw cluster_name)"
 
-          test -n "$backend_image_url" || { echo "backend_image_url is required in dev.tfvars"; exit 1; }
-          test -n "$frontend_image_url" || { echo "frontend_image_url is required in dev.tfvars"; exit 1; }
-
-          backend_repository="${backend_image_url%:*}"
-          backend_repository="${backend_repository##*/}"
-          frontend_repository="${frontend_image_url%:*}"
-          frontend_repository="${frontend_repository##*/}"
-
-          aws ecr describe-repositories --repository-names "$backend_repository" >/dev/null || {
-            echo "ECR repository '$backend_repository' does not exist. Provision dev infrastructure first with Terraform."
-            exit 1
-          }
-          aws ecr describe-repositories --repository-names "$frontend_repository" >/dev/null || {
-            echo "ECR repository '$frontend_repository' does not exist. Provision dev infrastructure first with Terraform."
-            exit 1
-          }
+          test -n "$backend_repository" || { echo "Backend ECR repository output was not found"; exit 1; }
+          test -n "$frontend_repository" || { echo "Frontend ECR repository output was not found"; exit 1; }
+          test -n "$cluster_name" || { echo "cluster_name output was not found"; exit 1; }
 
           echo "backend_repository=$backend_repository" >> "$GITHUB_OUTPUT"
           echo "frontend_repository=$frontend_repository" >> "$GITHUB_OUTPUT"
+          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
