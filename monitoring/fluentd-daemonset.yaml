@@ -13,9 +13,21 @@ spec:
         app: fluentd
     spec:
       serviceAccountName: fluentd
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fluentd
           image: fluent/fluentd-kubernetes-daemonset:v1.18-debian-elasticsearch8-1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: FLUENT_ELASTICSEARCH_HOST
               value: elasticsearch.monitoring.svc.cluster.local

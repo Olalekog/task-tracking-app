@@ -5,14 +5,20 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN addgroup --system app && adduser --system --ingroup app app
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN addgroup --system --gid 10001 app \
+    && adduser --system --uid 10001 --ingroup app app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-USER app
+USER 10001
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

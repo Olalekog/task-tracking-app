@@ -2,6 +2,7 @@ services:
   mysql:
     image: mysql:8.4
     container_name: task-tracking-mysql
+    user: "999:999"
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: taskdb
@@ -22,6 +23,7 @@ services:
     build:
       context: ./backend
     container_name: task-tracking-api
+    user: "10001:10001"
     environment:
       DATABASE_URL: mysql+pymysql://taskuser:taskpass@mysql:3306/taskdb
       CORS_ORIGINS: http://localhost:3000
@@ -35,8 +37,9 @@ services:
     build:
       context: ./frontend
     container_name: task-tracking-web
+    user: "101:101"
     ports:
-      - "3000:80"
+      - "3000:8080"
     depends_on:
       - backend
 

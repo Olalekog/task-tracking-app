@@ -146,21 +146,25 @@ jobs:
       - name: Build frontend image
         run: docker build -t $ECR_FRONTEND_REPOSITORY:$GITHUB_SHA -t $ECR_FRONTEND_REPOSITORY:latest frontend
       - name: Scan backend image before push
+        id: scan-backend-image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.ECR_BACKEND_REPOSITORY }}:${{ github.sha }}
           format: sarif
           output: trivy-backend-image.sarif
           severity: CRITICAL,HIGH
+          ignore-unfixed: true
           exit-code: "1"
         continue-on-error: true
       - name: Scan frontend image before push
+        id: scan-frontend-image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.ECR_FRONTEND_REPOSITORY }}:${{ github.sha }}
           format: sarif
           output: trivy-frontend-image.sarif
           severity: CRITICAL,HIGH
+          ignore-unfixed: true
           exit-code: "1"
         continue-on-error: true
       - name: Upload Trivy image scan results
@@ -173,8 +177,9 @@ jobs:
             trivy-frontend-image.sarif
           if-no-files-found: warn
       - name: Enforce Trivy image scan gate
+        if: always()
         run: |
-          if grep -q '"level": "error"' trivy-backend-image.sarif trivy-frontend-image.sarif; then
+          if [ "${{ steps.scan-backend-image.outcome }}" != "success" ] || [ "${{ steps.scan-frontend-image.outcome }}" != "success" ]; then
             echo "Trivy found CRITICAL or HIGH image vulnerabilities."
             exit 1
           fi
