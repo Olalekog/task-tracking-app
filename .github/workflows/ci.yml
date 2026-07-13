@@ -108,17 +108,17 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME }}
+      ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
       ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY || 'task-tracking-dev-backend' }}
       ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY || 'task-tracking-dev-frontend' }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate ECR publish configuration
         run: |
-          test -n "$AWS_REGION"
-          test -n "$ROLE_TO_ASSUME"
-          test -n "$ECR_BACKEND_REPOSITORY"
-          test -n "$ECR_FRONTEND_REPOSITORY"
+          test -n "$AWS_REGION" || { echo "AWS_REGION is required"; exit 1; }
+          test -n "$ROLE_TO_ASSUME" || { echo "ROLE_TO_ASSUME is required"; exit 1; }
+          test -n "$ECR_BACKEND_REPOSITORY" || { echo "ECR_BACKEND_REPOSITORY is required"; exit 1; }
+          test -n "$ECR_FRONTEND_REPOSITORY" || { echo "ECR_FRONTEND_REPOSITORY is required"; exit 1; }
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
