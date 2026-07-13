@@ -66,7 +66,7 @@ Configure these GitHub repository variables:
 
 Configure this GitHub repository secret:
 
-- `AWS_ROLE_TO_ASSUME`
+- `ROLE_TO_ASSUME`
 
 The workflow pushes both `$GITHUB_SHA` and `latest` tags for each image.
 Task Tracking App Deployed with Kubernetes

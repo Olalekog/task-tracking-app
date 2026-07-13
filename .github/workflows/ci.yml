@@ -107,16 +107,23 @@ jobs:
       - trivy
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
-      ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME }}
+      ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY || 'task-tracking-dev-backend' }}
+      ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY || 'task-tracking-dev-frontend' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate ECR publish configuration
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$ROLE_TO_ASSUME"
+          test -n "$ECR_BACKEND_REPOSITORY"
+          test -n "$ECR_FRONTEND_REPOSITORY"
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
