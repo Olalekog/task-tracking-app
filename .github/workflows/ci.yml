@@ -248,8 +248,8 @@ jobs:
       - name: Read dev cluster name
         id: cluster
         run: |
-          cluster_name="$(terraform output -raw cluster_name)"
-          test -n "$cluster_name" || { echo "cluster_name output is required"; exit 1; }
+          cluster_name="$(awk -F'"' '/^cluster_name[[:space:]]*=/{print $2}' dev.tfvars)"
+          test -n "$cluster_name" || { echo "cluster_name is required in dev.tfvars"; exit 1; }
           echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
       - name: Configure kubeconfig
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "${{ steps.cluster.outputs.cluster_name }}"
