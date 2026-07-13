@@ -251,8 +251,12 @@ jobs:
           cluster_name="$(awk -F'"' '/^cluster_name[[:space:]]*=/{print $2}' dev.tfvars)"
           test -n "$cluster_name" || { echo "cluster_name is required in dev.tfvars"; exit 1; }
           echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
+      - name: Ensure dev EKS infrastructure exists
+        run: terraform apply -var-file=dev.tfvars -var='aws_assume_role_arn=' -target=module.kubernetes -auto-approve
       - name: Configure kubeconfig
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "${{ steps.cluster.outputs.cluster_name }}"
+      - name: Ensure AWS Load Balancer Controller exists
+        run: terraform apply -var-file=dev.tfvars -var='aws_assume_role_arn=' -target=aws_iam_openid_connect_provider.eks -target=module.aws_load_balancer_controller -auto-approve
       - name: Apply Kubernetes manifests
         working-directory: ${{ github.workspace }}
         run: kubectl apply -k k8s
