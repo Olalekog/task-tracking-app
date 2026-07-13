@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -96,24 +96,6 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-fs.sarif
-      - name: Build backend image
-        run: docker build -t task-tracking-backend:${{ github.sha }} backend
-      - name: Build frontend image
-        run: docker build -t task-tracking-frontend:${{ github.sha }} frontend
-      - name: Backend image scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: task-tracking-backend:${{ github.sha }}
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: "0"
-      - name: Frontend image scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: task-tracking-frontend:${{ github.sha }}
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: "0"
 
   push-images:
     name: Build and push images to ECR
@@ -142,6 +124,20 @@ jobs:
         run: docker build -t $ECR_BACKEND_REPOSITORY:$GITHUB_SHA -t $ECR_BACKEND_REPOSITORY:latest backend
       - name: Build frontend image
         run: docker build -t $ECR_FRONTEND_REPOSITORY:$GITHUB_SHA -t $ECR_FRONTEND_REPOSITORY:latest frontend
+      - name: Scan backend image before push
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ECR_BACKEND_REPOSITORY }}:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Scan frontend image before push
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ECR_FRONTEND_REPOSITORY }}:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
       - name: Tag backend image for ECR
         run: |
           docker tag $ECR_BACKEND_REPOSITORY:$GITHUB_SHA ${{ steps.ecr-login.outputs.registry }}/$ECR_BACKEND_REPOSITORY:$GITHUB_SHA
