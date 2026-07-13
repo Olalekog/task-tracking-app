@@ -257,7 +257,7 @@ jobs:
       - name: Initialize Terraform
         run: terraform init
       - name: Apply ECR repositories
-        run: terraform apply -var-file=dev.tfvars -target=module.kms -target=module.ecr -auto-approve
+        run: terraform apply -var-file=dev.tfvars -var='aws_assume_role_arn=' -target=module.kms -target=module.ecr -auto-approve
       - name: Read ECR repository names
         id: ecr-repositories
         run: |

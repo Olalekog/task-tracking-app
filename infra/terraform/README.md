@@ -21,7 +21,7 @@ Configuration values are supplied through each environment's `variables.tf` file
 
 The `dev` environment stores Terraform state in the existing S3 bucket `react-js-application-terraform-state-866934333672` using the key `task-tracking-app/dev/terraform.tfstate`.
 
-Terraform assumes the existing IAM role `arn:aws:iam::866934333672:role/Reactjs-application-role` for S3 backend access and AWS provider operations in the dev environment.
+Terraform uses the active AWS credentials for S3 backend access. AWS provider role assumption is optional through `aws_assume_role_arn`; CI sets it to an empty value because GitHub Actions already assumes `ROLE_TO_ASSUME`.
 
 ## Environments
 
