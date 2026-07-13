@@ -66,7 +66,7 @@ Configure this GitHub repository secret:
 
 - `ROLE_TO_ASSUME`
 
-On pushes to `dev`, the workflow provisions the dev Terraform infrastructure first, including ECR and EKS, then pushes both `$GITHUB_SHA` and `latest` image tags, and finally deploys the pushed `$GITHUB_SHA` images to the dev cluster.
+On pushes to `dev`, the workflow assumes `ROLE_TO_ASSUME` to provision the dev Terraform infrastructure first, including ECR and EKS. It then pushes both `$GITHUB_SHA` and `latest` image tags and deploys the pushed `$GITHUB_SHA` images to the dev cluster.
 
-`ROLE_TO_ASSUME` must have enough permissions to manage the dev Terraform stack, including IAM roles, KMS, CloudWatch, ECR, VPC, EKS, and the AWS Load Balancer Controller.
+`ROLE_TO_ASSUME` must have enough permissions to manage the dev Terraform stack, including IAM role creation, KMS, CloudWatch, ECR, VPC, EKS, S3 state access, and the AWS Load Balancer Controller.
 Task Tracking App Deployed with Kubernetes
