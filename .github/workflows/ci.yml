@@ -118,13 +118,14 @@ jobs:
       - frontend
       - backend
       - terraform
+      - provision-dev-ecr
       - trivy
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
-      ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY || 'task-tracking-dev-backend' }}
-      ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY || 'task-tracking-dev-frontend' }}
+      ECR_BACKEND_REPOSITORY: ${{ needs.provision-dev-ecr.outputs.backend_repository }}
+      ECR_FRONTEND_REPOSITORY: ${{ needs.provision-dev-ecr.outputs.frontend_repository }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate ECR publish configuration
@@ -141,6 +142,11 @@ jobs:
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
+      - name: Verify ECR repositories exist
+        run: |
+          for repository in "$ECR_BACKEND_REPOSITORY" "$ECR_FRONTEND_REPOSITORY"; do
+            aws ecr describe-repositories --repository-names "$repository" >/dev/null
+          done
       - name: Build backend image
         run: docker build -t $ECR_BACKEND_REPOSITORY:$GITHUB_SHA -t $ECR_BACKEND_REPOSITORY:latest backend
       - name: Build frontend image
@@ -222,3 +228,45 @@ jobs:
       name: production
     steps:
       - run: echo "Approved promotion from uat to production."
+
+  provision-dev-ecr:
+    name: Provision dev ECR repositories
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    outputs:
+      backend_repository: ${{ steps.ecr-repositories.outputs.backend_repository }}
+      frontend_repository: ${{ steps.ecr-repositories.outputs.frontend_repository }}
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/dev
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Validate AWS configuration
+        run: |
+          test -n "$AWS_REGION" || { echo "AWS_REGION is required"; exit 1; }
+          test -n "$ROLE_TO_ASSUME" || { echo "ROLE_TO_ASSUME is required"; exit 1; }
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+      - name: Initialize Terraform
+        run: terraform init
+      - name: Apply ECR repositories
+        run: terraform apply -var-file=dev.tfvars -target=module.kms -target=module.ecr -auto-approve
+      - name: Read ECR repository names
+        id: ecr-repositories
+        run: |
+          repositories="$(terraform output -json ecr_repository_urls)"
+          backend_repository="$(echo "$repositories" | jq -r 'keys[] | select(test("backend$"))')"
+          frontend_repository="$(echo "$repositories" | jq -r 'keys[] | select(test("frontend$"))')"
+
+          test -n "$backend_repository" || { echo "Backend ECR repository output was not found"; exit 1; }
+          test -n "$frontend_repository" || { echo "Frontend ECR repository output was not found"; exit 1; }
+
+          echo "backend_repository=$backend_repository" >> "$GITHUB_OUTPUT"
+          echo "frontend_repository=$frontend_repository" >> "$GITHUB_OUTPUT"

@@ -61,12 +61,10 @@ The CI workflow can push images to Amazon ECR on pushes to `dev`.
 Configure these GitHub repository variables:
 
 - `AWS_REGION`
-- `ECR_BACKEND_REPOSITORY`
-- `ECR_FRONTEND_REPOSITORY`
 
 Configure this GitHub repository secret:
 
 - `ROLE_TO_ASSUME`
 
-The workflow pushes both `$GITHUB_SHA` and `latest` tags for each image.
+The workflow provisions the dev ECR repositories from Terraform, reads the repository names from Terraform outputs, and pushes both `$GITHUB_SHA` and `latest` tags for each image.
 Task Tracking App Deployed with Kubernetes
