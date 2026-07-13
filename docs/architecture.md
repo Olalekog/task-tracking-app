@@ -1,5 +1,9 @@
 # Architecture
 
+## AWS Architecture Diagram
+
+![Task Tracking App AWS Architecture](./aws-architecture.svg)
+
 ## End-to-End Architecture
 
 ```mermaid

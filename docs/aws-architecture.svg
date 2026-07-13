@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Task Tracking App AWS Architecture</title>
+  <desc id="desc">AWS architecture diagram for a React, FastAPI, MySQL task tracking application running on EKS with an Application Load Balancer, AWS Load Balancer Controller, ECR, Terraform, GitHub Actions, Argo CD, and observability services.</desc>
+  <defs>
+    <style>
+      .page { fill: #f6f8fb; }
+      .box { fill: #ffffff; stroke: #c9d3df; stroke-width: 2; rx: 14; }
+      .aws { fill: #fff8ed; stroke: #ff9900; stroke-width: 3; rx: 18; }
+      .vpc { fill: #f2f8ff; stroke: #5b9bd5; stroke-width: 3; rx: 18; }
+      .az { fill: #ffffff; stroke: #a9bfd8; stroke-width: 2; stroke-dasharray: 8 6; rx: 12; }
+      .ns { fill: #f8fbff; stroke: #7da7d9; stroke-width: 2; rx: 12; }
+      .service { fill: #e9f4ff; stroke: #2f74b5; stroke-width: 2; rx: 10; }
+      .compute { fill: #eef8ee; stroke: #4f9d55; stroke-width: 2; rx: 10; }
+      .data { fill: #fff1f0; stroke: #d95f59; stroke-width: 2; rx: 10; }
+      .security { fill: #f4efff; stroke: #7b61c9; stroke-width: 2; rx: 10; }
+      .cicd { fill: #f0f7f4; stroke: #3f8f64; stroke-width: 2; rx: 10; }
+      .obs { fill: #fff7e6; stroke: #d98f25; stroke-width: 2; rx: 10; }
+      .label { fill: #172026; font: 700 22px Arial, sans-serif; }
+      .small { fill: #3d4b55; font: 16px Arial, sans-serif; }
+      .tiny { fill: #52636a; font: 13px Arial, sans-serif; }
+      .title { fill: #172026; font: 800 34px Arial, sans-serif; }
+      .section { fill: #172026; font: 800 24px Arial, sans-serif; }
+      .arrow { stroke: #263a3d; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .arrowSoft { stroke: #667985; stroke-width: 2.5; fill: none; marker-end: url(#arrowSoft); stroke-dasharray: 8 5; }
+      .line { stroke: #94a3b8; stroke-width: 2; fill: none; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263a3d"/>
+    </marker>
+    <marker id="arrowSoft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#667985"/>
+    </marker>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1800" height="1180"/>
+  <text class="title" x="60" y="62">Task Tracking App AWS Architecture</text>
+  <text class="small" x="60" y="92">React frontend exposed only through an AWS Application Load Balancer; backend and database remain internal to EKS.</text>
+
+  <rect class="box" x="60" y="130" width="300" height="170"/>
+  <text class="section" x="90" y="170">Users</text>
+  <text class="label" x="90" y="212">Browser</text>
+  <text class="small" x="90" y="242">task-tracking.example.com</text>
+
+  <rect class="box" x="430" y="115" width="420" height="210"/>
+  <text class="section" x="460" y="155">GitHub</text>
+  <rect class="cicd" x="460" y="180" width="170" height="70"/>
+  <text class="small" x="484" y="210">Repository</text>
+  <text class="tiny" x="484" y="232">Source + manifests</text>
+  <rect class="cicd" x="650" y="180" width="170" height="70"/>
+  <text class="small" x="674" y="210">Actions CI</text>
+  <text class="tiny" x="674" y="232">Build, scan, push</text>
+  <rect class="cicd" x="555" y="260" width="220" height="45"/>
+  <text class="tiny" x="586" y="288">dev to uat, uat to production gate</text>
+
+  <rect class="box" x="900" y="115" width="350" height="210"/>
+  <text class="section" x="930" y="155">Terraform</text>
+  <rect class="security" x="930" y="180" width="130" height="62"/>
+  <text class="small" x="956" y="208">VPC</text>
+  <text class="tiny" x="948" y="229">3 AZ network</text>
+  <rect class="security" x="1085" y="180" width="130" height="62"/>
+  <text class="small" x="1112" y="208">EKS</text>
+  <text class="tiny" x="1102" y="229">Managed nodes</text>
+  <rect class="security" x="930" y="255" width="285" height="45"/>
+  <text class="tiny" x="956" y="283">IAM, KMS, ECR, S3, CloudWatch, ALB Controller</text>
+
+  <rect class="aws" x="60" y="360" width="1680" height="760"/>
+  <text class="section" x="90" y="400">AWS Account</text>
+
+  <rect class="vpc" x="95" y="430" width="1125" height="650"/>
+  <text class="section" x="125" y="470">VPC</text>
+  <text class="tiny" x="125" y="494">Public subnets host ALB targets; private subnets host EKS worker nodes.</text>
+
+  <rect class="az" x="125" y="520" width="330" height="520"/>
+  <text class="small" x="150" y="552">Availability Zone A</text>
+  <rect class="az" x="475" y="520" width="330" height="520"/>
+  <text class="small" x="500" y="552">Availability Zone B</text>
+  <rect class="az" x="825" y="520" width="330" height="520"/>
+  <text class="small" x="850" y="552">Availability Zone C</text>
+
+  <rect class="service" x="165" y="585" width="280" height="80"/>
+  <text class="label" x="195" y="620">Application Load Balancer</text>
+  <text class="tiny" x="195" y="643">Created by AWS Load Balancer Controller</text>
+  <rect class="service" x="515" y="585" width="250" height="80"/>
+  <text class="label" x="550" y="620">EKS Control Plane</text>
+  <text class="tiny" x="550" y="643">Managed by AWS</text>
+  <rect class="service" x="865" y="585" width="250" height="80"/>
+  <text class="label" x="902" y="620">Managed Nodes</text>
+  <text class="tiny" x="902" y="643">Private subnets</text>
+
+  <rect class="ns" x="150" y="705" width="955" height="295"/>
+  <text class="section" x="178" y="742">EKS Cluster Runtime</text>
+
+  <rect class="ns" x="180" y="770" width="270" height="190"/>
+  <text class="small" x="205" y="803">frontend namespace</text>
+  <rect class="service" x="205" y="825" width="220" height="45"/>
+  <text class="tiny" x="233" y="853">Ingress: alb, / to frontend</text>
+  <rect class="compute" x="205" y="885" width="220" height="55"/>
+  <text class="small" x="234" y="915">React + nginx pods</text>
+
+  <rect class="ns" x="485" y="770" width="270" height="190"/>
+  <text class="small" x="510" y="803">backend namespace</text>
+  <rect class="service" x="510" y="825" width="220" height="45"/>
+  <text class="tiny" x="553" y="853">ClusterIP service</text>
+  <rect class="compute" x="510" y="885" width="220" height="55"/>
+  <text class="small" x="548" y="915">FastAPI pods</text>
+
+  <rect class="ns" x="790" y="770" width="285" height="190"/>
+  <text class="small" x="815" y="803">database namespace</text>
+  <rect class="service" x="815" y="825" width="230" height="45"/>
+  <text class="tiny" x="846" y="853">Headless MySQL service</text>
+  <rect class="data" x="815" y="885" width="230" height="55"/>
+  <text class="small" x="848" y="915">MySQL StatefulSet</text>
+
+  <rect class="data" x="1180" y="760" width="320" height="95"/>
+  <text class="label" x="1210" y="798">Persistent Storage</text>
+  <text class="small" x="1210" y="826">PVC: mysql-data</text>
+  <text class="tiny" x="1210" y="846">Database survives pod restarts</text>
+
+  <rect class="security" x="1180" y="885" width="320" height="95"/>
+  <text class="label" x="1210" y="923">Secrets + Init</text>
+  <text class="small" x="1210" y="951">backend-secret, mysql-secret</text>
+  <text class="tiny" x="1210" y="971">mysql-init ConfigMap seeds sample data</text>
+
+  <rect class="box" x="1260" y="430" width="430" height="285"/>
+  <text class="section" x="1290" y="470">AWS Platform Services</text>
+  <rect class="service" x="1290" y="500" width="165" height="60"/>
+  <text class="small" x="1330" y="528">ECR</text>
+  <text class="tiny" x="1312" y="548">Backend + frontend images</text>
+  <rect class="security" x="1490" y="500" width="165" height="60"/>
+  <text class="small" x="1530" y="528">KMS</text>
+  <text class="tiny" x="1512" y="548">Encryption</text>
+  <rect class="service" x="1290" y="585" width="165" height="60"/>
+  <text class="small" x="1330" y="613">S3</text>
+  <text class="tiny" x="1312" y="633">Artifacts + tfstate</text>
+  <rect class="obs" x="1490" y="585" width="165" height="60"/>
+  <text class="small" x="1516" y="613">CloudWatch</text>
+  <text class="tiny" x="1512" y="633">EKS/application logs</text>
+
+  <rect class="box" x="1260" y="745" width="430" height="300"/>
+  <text class="section" x="1290" y="785">Observability Namespace</text>
+  <rect class="obs" x="1290" y="820" width="165" height="60"/>
+  <text class="small" x="1320" y="849">Prometheus</text>
+  <text class="tiny" x="1320" y="868">Scrapes /metrics</text>
+  <rect class="obs" x="1490" y="820" width="165" height="60"/>
+  <text class="small" x="1530" y="849">Grafana</text>
+  <text class="tiny" x="1515" y="868">Dashboards</text>
+  <rect class="obs" x="1290" y="910" width="165" height="60"/>
+  <text class="small" x="1330" y="939">Fluentd</text>
+  <text class="tiny" x="1320" y="958">Ships logs</text>
+  <rect class="obs" x="1490" y="910" width="165" height="60"/>
+  <text class="small" x="1510" y="939">Elasticsearch</text>
+  <text class="tiny" x="1538" y="958">Kibana</text>
+
+  <path class="arrow" d="M360 215 C430 215 410 625 165 625"/>
+  <path class="arrowSoft" d="M630 250 C755 315 940 340 1040 430"/>
+  <path class="arrowSoft" d="M735 250 C910 305 1190 410 1365 500"/>
+  <path class="arrow" d="M445 625 L515 625"/>
+  <path class="arrow" d="M640 665 L640 705"/>
+  <path class="arrow" d="M315 665 L315 770"/>
+  <path class="arrow" d="M315 940 C390 1015 540 1005 620 940"/>
+  <path class="arrow" d="M730 912 L815 912"/>
+  <path class="arrow" d="M1045 912 L1180 808"/>
+  <path class="arrowSoft" d="M1045 900 L1180 935"/>
+  <path class="arrowSoft" d="M1455 528 C1260 620 1150 710 1045 890"/>
+  <path class="arrowSoft" d="M730 885 C890 740 1170 760 1290 850"/>
+  <path class="arrowSoft" d="M620 940 C900 1035 1170 1010 1290 940"/>
+
+  <text class="tiny" x="380" y="205">HTTPS/HTTP</text>
+  <text class="tiny" x="333" y="706">Only frontend is public</text>
+  <text class="tiny" x="418" y="998">nginx proxies /api internally</text>
+  <text class="tiny" x="750" y="895">SQL over cluster network</text>
+</svg>
