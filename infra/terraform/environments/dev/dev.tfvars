@@ -28,9 +28,6 @@ private_subnet_cidrs = [
 internet_route_cidr = "0.0.0.0/0"
 nat_gateway_count   = 1
 
-backend_image_url  = "866934333672.dkr.ecr.us-east-1.amazonaws.com/task-tracking-dev-backend:latest"
-frontend_image_url = "866934333672.dkr.ecr.us-east-1.amazonaws.com/task-tracking-dev-frontend:latest"
-
 worker_desired_size   = 2
 worker_min_size       = 2
 worker_max_size       = 4

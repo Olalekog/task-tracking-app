@@ -200,16 +200,6 @@ variable "ecr_repositories" {
   }
 }
 
-variable "backend_image_url" {
-  description = "Full backend container image URL, including tag, used when rendering the Kubernetes backend deployment manifest."
-  type        = string
-}
-
-variable "frontend_image_url" {
-  description = "Full frontend container image URL, including tag, used when rendering the Kubernetes frontend deployment manifest."
-  type        = string
-}
-
 variable "iam_policy_version" {
   description = "IAM policy language version."
   type        = string

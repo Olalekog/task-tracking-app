@@ -67,7 +67,8 @@ flowchart TB
 
     subgraph cd[GitOps Delivery]
       argocd[Argo CD Application]
-      manifests[Kubernetes Manifests<br/>k8s/ + monitoring/]
+      gitops[task-tracking-app-gitops repo<br/>applications + base + overlays]
+      manifests[Kustomize Manifests<br/>base + overlays]
       rendered[Terraform-rendered Deployment Manifests<br/>generated/k8s per environment]
     end
   end
@@ -100,7 +101,7 @@ flowchart TB
   iam --> eks
   iam --> nodes
 
-  argocd --> manifests --> cluster
+  argocd --> gitops --> manifests --> cluster
   rendered --> manifests
   ecr --> frontendPod
   ecr --> backendPods
@@ -171,7 +172,7 @@ Fresh MySQL databases are initialized with `database/init/001-seed-tasks.sql` lo
 
 Terraform provisions an AWS EKS cluster with networking across three availability zones and a managed node group with two desired worker nodes.
 
-The Terraform environments (`dev`, `uat`, and `production`) provision the shared platform pattern with environment-specific names, CIDR ranges, ECR repositories, KMS encryption, CloudWatch log groups, and worker node settings. Each environment also accepts `backend_image_url` and `frontend_image_url` through tfvars and renders deployment manifests from templates.
+The Terraform environments (`dev`, `uat`, and `production`) provision the shared platform pattern with environment-specific names, CIDR ranges, ECR repositories, KMS encryption, CloudWatch log groups, and worker node settings. Kubernetes application manifests are owned by the separate GitOps repository and deployed by Argo CD.
 
 Terraform installs the AWS Load Balancer Controller into EKS with Helm and an IRSA-backed service account. The Kubernetes ingress uses `ingressClassName: alb`, allowing the controller to create and manage the public Application Load Balancer that forwards traffic only to the frontend service.
 

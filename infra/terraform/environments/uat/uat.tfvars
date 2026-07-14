@@ -60,9 +60,6 @@ ecr_repositories = {
   }
 }
 
-backend_image_url  = "866934333672.dkr.ecr.us-east-1.amazonaws.com/task-tracking-uat-backend:latest"
-frontend_image_url = "866934333672.dkr.ecr.us-east-1.amazonaws.com/task-tracking-uat-frontend:latest"
-
 node_group_name       = "task-tracking-uat-workers"
 worker_desired_size   = 2
 worker_min_size       = 2

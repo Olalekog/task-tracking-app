@@ -33,9 +33,8 @@ Services:
 backend/                 FastAPI service
 frontend/                React app
 infra/terraform/         Reusable Terraform module and dev environment
-k8s/                     Kubernetes manifests
-argocd/                  Argo CD application manifests
-monitoring/              Prometheus, Grafana, Fluentd, ELK manifests
+../task-tracking-app-gitops/
+                         Argo CD applications, app manifests, monitoring manifests, and overlays
 .github/workflows/       CI pipeline with scans and build checks
 ```
 
@@ -43,7 +42,7 @@ monitoring/              Prometheus, Grafana, Fluentd, ELK manifests
 
 1. Terraform provisions the Kubernetes platform.
 2. GitHub Actions validates, scans, builds, and can publish images.
-3. Argo CD syncs Kubernetes manifests from this repository.
+3. Argo CD syncs Kubernetes manifests from the sibling `task-tracking-app-gitops` repository.
 4. Prometheus/Grafana handle metrics, Fluentd ships logs to Elasticsearch/Kibana.
 
 ## Kubernetes Namespaces
@@ -68,5 +67,7 @@ Configure this GitHub repository secret:
 
 On pushes to `dev`, the workflow assumes `ROLE_TO_ASSUME` to provision the dev Terraform infrastructure first, including ECR and EKS. It then pushes both `$GITHUB_SHA` and `latest` image tags and deploys the pushed `$GITHUB_SHA` images to the dev cluster.
 
-`ROLE_TO_ASSUME` must have enough permissions to manage the dev Terraform stack, including IAM role creation, KMS, CloudWatch, ECR, VPC, EKS, S3 state access, and the AWS Load Balancer Controller.
+On pull requests from `dev` to `uat`, the workflow provisions UAT infrastructure. On pull requests from `uat` to `production`, the workflow waits for the production approval gate and then provisions production infrastructure.
+
+`ROLE_TO_ASSUME` must have enough permissions to manage the Terraform stacks, including IAM role creation, KMS, CloudWatch, ECR, VPC, EKS, S3 state access, and the AWS Load Balancer Controller.
 Task Tracking App Deployed with Kubernetes

@@ -23,21 +23,6 @@ output "ecr_repository_urls" {
   value       = module.ecr.repository_urls
 }
 
-output "backend_image_url" {
-  description = "Backend container image URL used in the rendered Kubernetes deployment manifest."
-  value       = var.backend_image_url
-}
-
-output "frontend_image_url" {
-  description = "Frontend container image URL used in the rendered Kubernetes deployment manifest."
-  value       = var.frontend_image_url
-}
-
-output "rendered_kubernetes_manifest_dir" {
-  description = "Directory where Terraform renders UAT Kubernetes deployment manifests."
-  value       = local.rendered_manifest_dir
-}
-
 output "aws_load_balancer_controller_iam_role_arn" {
   description = "IAM role ARN used by the AWS Load Balancer Controller service account."
   value       = module.aws_load_balancer_controller.iam_role_arn

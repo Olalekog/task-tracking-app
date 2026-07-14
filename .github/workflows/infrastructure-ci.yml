@@ -1,0 +1,975 @@
+name: Infrastructure CI/CD
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "modules/**"
+      - "environments/**"
+      - "bootstrap/**"
+      - ".github/workflows/infrastructure-ci.yml"
+      - "*.tf"
+      - "*.tfvars"
+      - ".terraform.lock.hcl"
+
+  pull_request:
+    branches:
+      - uat
+      - production
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - closed
+    paths:
+      - "modules/**"
+      - "environments/**"
+      - "bootstrap/**"
+      - ".github/workflows/infrastructure-ci.yml"
+      - "*.tf"
+      - "*.tfvars"
+      - ".terraform.lock.hcl"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to plan or deploy
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - production
+      operation:
+        description: Terraform operation
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+  pull-requests: read
+
+concurrency:
+  group: infrastructure-${{ github.event.inputs.environment || github.base_ref || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  ROLE_TO_ASSUME: ${{ vars.ROLE_TO_ASSUME }}
+  ARGOCD_NAMESPACE: ${{ vars.ARGOCD_NAMESPACE || 'argocd' }}
+  ARGOCD_RELEASE_NAME: ${{ vars.ARGOCD_RELEASE_NAME || 'argocd' }}
+  ARGOCD_CHART_VERSION: ${{ vars.ARGOCD_CHART_VERSION }}
+  ARGOCD_VALUES_FILE: ${{ vars.ARGOCD_VALUES_FILE || 'platform/argocd/values.yaml' }}
+  GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
+  GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+  GITOPS_ROOT_APPLICATION_PATH: ${{ vars.GITOPS_ROOT_APPLICATION_PATH || 'bootstrap/root-application.yaml' }}
+  SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+  SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || 'task-tracking-infrastructure' }}
+  SONAR_PROJECT_NAME: ${{ vars.SONAR_PROJECT_NAME || 'Task Tracking Infrastructure' }}
+
+jobs:
+  resolve-context:
+    name: Resolve deployment context
+    runs-on: ubuntu-latest
+
+    outputs:
+      environment: ${{ steps.context.outputs.environment }}
+      operation: ${{ steps.context.outputs.operation }}
+      should_plan: ${{ steps.context.outputs.should_plan }}
+      should_apply: ${{ steps.context.outputs.should_apply }}
+      working_directory: ${{ steps.context.outputs.working_directory }}
+      state_key: ${{ steps.context.outputs.state_key }}
+
+    steps:
+      - name: Resolve environment and operation
+        id: context
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          environment=""
+          operation=""
+          should_plan="false"
+          should_apply="false"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            environment="${{ inputs.environment }}"
+            operation="${{ inputs.operation }}"
+            should_plan="true"
+
+            if [[ "$operation" == "apply" ]]; then
+              should_apply="true"
+            fi
+
+          elif [[ "${{ github.event_name }}" == "push" &&
+                  "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            environment="dev"
+            operation="apply"
+            should_plan="true"
+            should_apply="true"
+
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            source="${{ github.head_ref }}"
+            target="${{ github.base_ref }}"
+            action="${{ github.event.action }}"
+            merged="${{ github.event.pull_request.merged || false }}"
+
+            case "${source}:${target}" in
+              dev:uat)
+                environment="uat"
+                ;;
+              uat:production)
+                environment="production"
+                ;;
+              *)
+                echo "Invalid promotion path: ${source} -> ${target}"
+                echo "Allowed paths are dev -> uat and uat -> production."
+                exit 1
+                ;;
+            esac
+
+            if [[ "$action" == "closed" ]]; then
+              if [[ "$merged" == "true" ]]; then
+                operation="apply"
+                should_plan="true"
+                should_apply="true"
+              else
+                operation="none"
+              fi
+            else
+              operation="plan"
+              should_plan="true"
+            fi
+          else
+            echo "Unsupported workflow event."
+            exit 1
+          fi
+
+          if [[ -z "$environment" ]]; then
+            echo "Could not resolve the target environment."
+            exit 1
+          fi
+
+          working_directory="environments/${environment}"
+          state_key="${PROJECT_NAME}/${environment}/terraform.tfstate"
+
+          echo "environment=$environment" >> "$GITHUB_OUTPUT"
+          echo "operation=$operation" >> "$GITHUB_OUTPUT"
+          echo "should_plan=$should_plan" >> "$GITHUB_OUTPUT"
+          echo "should_apply=$should_apply" >> "$GITHUB_OUTPUT"
+          echo "working_directory=$working_directory" >> "$GITHUB_OUTPUT"
+          echo "state_key=$state_key" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Infrastructure workflow context"
+            echo
+            echo "- Environment: \`$environment\`"
+            echo "- Operation: \`$operation\`"
+            echo "- Working directory: \`$working_directory\`"
+            echo "- State key: \`$state_key\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  validate-promotion:
+    name: Validate promotion path
+    runs-on: ubuntu-latest
+
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        github.event.action != 'closed'
+      }}
+
+    steps:
+      - name: Enforce branch promotion sequence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE="${{ github.head_ref }}"
+          TARGET="${{ github.base_ref }}"
+
+          case "${SOURCE}:${TARGET}" in
+            dev:uat)
+              echo "Valid infrastructure promotion: dev -> uat"
+              ;;
+            uat:production)
+              echo "Valid infrastructure promotion: uat -> production"
+              ;;
+            *)
+              echo "Invalid infrastructure promotion: ${SOURCE} -> ${TARGET}"
+              exit 1
+              ;;
+          esac
+
+  terraform-format:
+    name: Terraform format
+    runs-on: ubuntu-latest
+
+    if: ${{ needs.resolve-context.outputs.should_plan == 'true' }}
+
+    needs:
+      - resolve-context
+
+    steps:
+      - name: Checkout infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref || github.ref }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive
+
+  checkov:
+    name: Checkov infrastructure scan
+    runs-on: ubuntu-latest
+
+    if: ${{ needs.resolve-context.outputs.should_plan == 'true' }}
+
+    needs:
+      - resolve-context
+
+    steps:
+      - name: Checkout infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref || github.ref }}
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform,github_actions
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+
+      - name: Upload Checkov report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-${{ needs.resolve-context.outputs.environment }}
+          path: checkov.sarif
+          if-no-files-found: warn
+
+  trivy:
+    name: Trivy repository and IaC scan
+    runs-on: ubuntu-latest
+
+    if: ${{ needs.resolve-context.outputs.should_plan == 'true' }}
+
+    needs:
+      - resolve-context
+
+    steps:
+      - name: Checkout infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref || github.ref }}
+
+      - name: Run Trivy scan and create SARIF report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload Trivy SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-infrastructure-${{ needs.resolve-context.outputs.environment }}
+
+      - name: Upload Trivy SARIF artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-infrastructure-${{ needs.resolve-context.outputs.environment }}-${{ github.run_id }}
+          path: trivy-results.sarif
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce Trivy security gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+  sonarqube:
+    name: SonarQube analysis
+    runs-on: ubuntu-latest
+
+    if: ${{ needs.resolve-context.outputs.should_plan == 'true' }}
+
+    needs:
+      - resolve-context
+
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    steps:
+      - name: Checkout infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref || github.ref }}
+
+      - name: Validate SonarQube configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$SONAR_TOKEN" || {
+            echo "SONAR_TOKEN GitHub secret is required."
+            exit 1
+          }
+
+          test -n "$SONAR_HOST_URL" || {
+            echo "SONAR_HOST_URL GitHub variable is required."
+            exit 1
+          }
+
+          test -n "$SONAR_PROJECT_KEY" || {
+            echo "SONAR_PROJECT_KEY is required."
+            exit 1
+          }
+
+      - name: Run SonarQube scan and wait for quality gate
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+        with:
+          args: >-
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.projectName=${{ env.SONAR_PROJECT_NAME }}
+            -Dsonar.sources=.
+            -Dsonar.exclusions=**/.terraform/**,**/tfplan,**/*.tfstate,**/*.tfstate.*,**/checkov.sarif,**/trivy-results.sarif
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+
+      - name: Upload SonarQube task report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sonarqube-task-report-${{ needs.resolve-context.outputs.environment }}-${{ github.run_id }}
+          path: .scannerwork/report-task.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  terraform-plan:
+    name: Terraform plan - ${{ needs.resolve-context.outputs.environment }}
+    runs-on: ubuntu-latest
+
+    needs:
+      - resolve-context
+      - terraform-format
+      - checkov
+      - trivy
+      - sonarqube
+
+    if: >-
+      ${{
+        always() &&
+        needs.resolve-context.outputs.should_plan == 'true' &&
+        needs.terraform-format.result == 'success' &&
+        needs.checkov.result == 'success' &&
+        needs.trivy.result == 'success' &&
+        needs.sonarqube.result == 'success'
+      }}
+
+    environment:
+      name: ${{ needs.resolve-context.outputs.environment }}
+
+    defaults:
+      run:
+        working-directory: ${{ needs.resolve-context.outputs.working_directory }}
+
+    outputs:
+      plan_artifact: ${{ steps.plan-metadata.outputs.plan_artifact }}
+
+    steps:
+      - name: Checkout infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref || github.ref }}
+
+      - name: Validate required configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$AWS_ACCOUNT_ID" || {
+            echo "AWS_ACCOUNT_ID GitHub variable is required."
+            exit 1
+          }
+
+          test -n "$AWS_REGION" || {
+            echo "AWS_REGION GitHub variable is required."
+            exit 1
+          }
+
+          test -n "$PROJECT_NAME" || {
+            echo "PROJECT_NAME GitHub variable is required."
+            exit 1
+          }
+
+          test -n "$TERRAFORM_VERSION" || {
+            echo "TERRAFORM_VERSION GitHub variable is required."
+            exit 1
+          }
+
+          test -n "$TF_STATE_BUCKET" || {
+            echo "TF_STATE_BUCKET GitHub variable is required."
+            exit 1
+          }
+
+          test -n "$ROLE_TO_ASSUME" || {
+            echo "ROLE_TO_ASSUME GitHub variable is required."
+            exit 1
+          }
+
+          expected_account="$(cut -d: -f5 <<< "$ROLE_TO_ASSUME")"
+
+          if [[ "$expected_account" != "$AWS_ACCOUNT_ID" ]]; then
+            echo "ROLE_TO_ASSUME belongs to AWS account $expected_account,"
+            echo "but AWS_ACCOUNT_ID is $AWS_ACCOUNT_ID."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-plan
+          mask-aws-account-id: true
+
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity
+
+      - name: Verify Terraform state bucket exists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws s3api head-bucket \
+            --bucket "$TF_STATE_BUCKET"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Initialize Terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${{ needs.resolve-context.outputs.state_key }}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Validate Terraform
+        run: terraform validate -no-color
+
+      - name: Create Terraform plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform plan \
+            -input=false \
+            -no-color \
+            -lock-timeout=5m \
+            -var-file="${{ needs.resolve-context.outputs.environment }}.tfvars" \
+            -var="environment=${{ needs.resolve-context.outputs.environment }}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -out=tfplan \
+            | tee terraform-plan.txt
+
+      - name: Record plan metadata
+        id: plan-metadata
+        shell: bash
+        run: |
+          artifact_name="terraform-plan-${{ needs.resolve-context.outputs.environment }}-${GITHUB_RUN_ID}"
+          echo "plan_artifact=$artifact_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.plan-metadata.outputs.plan_artifact }}
+          path: |
+            ${{ needs.resolve-context.outputs.working_directory }}/tfplan
+            ${{ needs.resolve-context.outputs.working_directory }}/terraform-plan.txt
+            ${{ needs.resolve-context.outputs.working_directory }}/.terraform.lock.hcl
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Add plan to workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Terraform plan: ${{ needs.resolve-context.outputs.environment }}"
+            echo
+            echo '```text'
+            tail -n 200 terraform-plan.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  terraform-apply:
+    name: Terraform apply - ${{ needs.resolve-context.outputs.environment }}
+    runs-on: ubuntu-latest
+
+    needs:
+      - resolve-context
+      - terraform-plan
+
+    if: >-
+      ${{
+        always() &&
+        needs.resolve-context.outputs.should_apply == 'true' &&
+        needs.terraform-plan.result == 'success'
+      }}
+
+    environment:
+      name: ${{ needs.resolve-context.outputs.environment }}
+
+    defaults:
+      run:
+        working-directory: ${{ needs.resolve-context.outputs.working_directory }}
+
+    outputs:
+      cluster_name: ${{ steps.platform-outputs.outputs.cluster_name }}
+
+    steps:
+      - name: Checkout infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref }}
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-apply
+          mask-aws-account-id: true
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Initialize Terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${{ needs.resolve-context.outputs.state_key }}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Download approved Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.terraform-plan.outputs.plan_artifact }}
+          path: ${{ needs.resolve-context.outputs.working_directory }}
+
+      - name: Apply Terraform plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            -lock-timeout=5m \
+            tfplan
+
+      - name: Read platform outputs
+        id: platform-outputs
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cluster_name="$(terraform output -raw cluster_name)"
+
+          test -n "$cluster_name" || {
+            echo "Terraform output 'cluster_name' is required."
+            exit 1
+          }
+
+          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
+
+      - name: Export Terraform outputs
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform output -json \
+            > "terraform-outputs-${{ needs.resolve-context.outputs.environment }}.json"
+
+      - name: Upload Terraform outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ needs.resolve-context.outputs.environment }}-${{ github.run_id }}
+          path: ${{ needs.resolve-context.outputs.working_directory }}/terraform-outputs-${{ needs.resolve-context.outputs.environment }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deployment summary
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Infrastructure deployment completed"
+            echo
+            echo "- Project: \`${PROJECT_NAME}\`"
+            echo "- Environment: \`${{ needs.resolve-context.outputs.environment }}\`"
+            echo "- AWS account: \`${AWS_ACCOUNT_ID}\`"
+            echo "- AWS region: \`${AWS_REGION}\`"
+            echo "- State: \`s3://${TF_STATE_BUCKET}/${{ needs.resolve-context.outputs.state_key }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  install-argocd:
+    name: Install or upgrade Argo CD
+    runs-on: ubuntu-latest
+
+    needs:
+      - resolve-context
+      - terraform-apply
+
+    if: >-
+      ${{
+        always() &&
+        needs.resolve-context.outputs.should_apply == 'true' &&
+        needs.terraform-apply.result == 'success'
+      }}
+
+    environment:
+      name: ${{ needs.resolve-context.outputs.environment }}
+
+    steps:
+      - name: Checkout infrastructure repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref }}
+
+      - name: Validate Argo CD installation configuration
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+        run: |
+          set -euo pipefail
+
+          test -n "$AWS_REGION" || {
+            echo "AWS_REGION is required."
+            exit 1
+          }
+
+          test -n "$ROLE_TO_ASSUME" || {
+            echo "ROLE_TO_ASSUME is required."
+            exit 1
+          }
+
+          test -n "$CLUSTER_NAME" || {
+            echo "The Terraform cluster_name output is required."
+            exit 1
+          }
+
+          test -n "$ARGOCD_CHART_VERSION" || {
+            echo "ARGOCD_CHART_VERSION GitHub variable is required."
+            exit 1
+          }
+
+          test -f "$ARGOCD_VALUES_FILE" || {
+            echo "Argo CD values file was not found: $ARGOCD_VALUES_FILE"
+            exit 1
+          }
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-argocd
+          mask-aws-account-id: true
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Configure access to the EKS cluster
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+        run: |
+          set -euo pipefail
+
+          aws eks update-kubeconfig \
+            --region "$AWS_REGION" \
+            --name "$CLUSTER_NAME"
+
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Add the Argo Helm repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          helm repo add argo https://argoproj.github.io/argo-helm \
+            --force-update
+
+          helm repo update
+
+      - name: Validate the Argo CD Helm release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          helm lint argo/argo-cd \
+            --version "$ARGOCD_CHART_VERSION" \
+            --values "$ARGOCD_VALUES_FILE"
+
+          helm template "$ARGOCD_RELEASE_NAME" argo/argo-cd \
+            --namespace "$ARGOCD_NAMESPACE" \
+            --version "$ARGOCD_CHART_VERSION" \
+            --values "$ARGOCD_VALUES_FILE" \
+            > /tmp/argocd-rendered.yaml
+
+          test -s /tmp/argocd-rendered.yaml
+
+      - name: Install or upgrade Argo CD with Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          helm upgrade --install "$ARGOCD_RELEASE_NAME" argo/argo-cd \
+            --namespace "$ARGOCD_NAMESPACE" \
+            --create-namespace \
+            --version "$ARGOCD_CHART_VERSION" \
+            --values "$ARGOCD_VALUES_FILE" \
+            --atomic \
+            --cleanup-on-fail \
+            --wait \
+            --timeout 20m
+
+      - name: Verify the Argo CD deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          helm status "$ARGOCD_RELEASE_NAME" \
+            --namespace "$ARGOCD_NAMESPACE"
+
+          kubectl get deployments,statefulsets,pods,services \
+            --namespace "$ARGOCD_NAMESPACE"
+
+          kubectl rollout status \
+            deployment/"$ARGOCD_RELEASE_NAME"-server \
+            --namespace "$ARGOCD_NAMESPACE" \
+            --timeout=10m
+
+          kubectl rollout status \
+            deployment/"$ARGOCD_RELEASE_NAME"-repo-server \
+            --namespace "$ARGOCD_NAMESPACE" \
+            --timeout=10m
+
+      - name: Add Argo CD installation summary
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+        run: |
+          {
+            echo "### Argo CD installed"
+            echo
+            echo "- Environment: \`${{ needs.resolve-context.outputs.environment }}\`"
+            echo "- EKS cluster: \`${CLUSTER_NAME}\`"
+            echo "- Helm release: \`${ARGOCD_RELEASE_NAME}\`"
+            echo "- Namespace: \`${ARGOCD_NAMESPACE}\`"
+            echo "- Chart version: \`${ARGOCD_CHART_VERSION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bootstrap-argocd:
+    name: Bootstrap Argo CD root application
+    runs-on: ubuntu-latest
+
+    needs:
+      - resolve-context
+      - terraform-apply
+      - install-argocd
+
+    if: >-
+      ${{
+        always() &&
+        needs.resolve-context.outputs.should_apply == 'true' &&
+        needs.install-argocd.result == 'success' &&
+        vars.BOOTSTRAP_ARGOCD == 'true'
+      }}
+
+    environment:
+      name: ${{ needs.resolve-context.outputs.environment }}
+
+    steps:
+      - name: Validate GitOps bootstrap configuration
+        shell: bash
+        env:
+          GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          test -n "$GITOPS_REPOSITORY" || {
+            echo "GITOPS_REPOSITORY is required when BOOTSTRAP_ARGOCD=true."
+            exit 1
+          }
+
+          test -n "$GITOPS_BRANCH" || {
+            echo "GITOPS_BRANCH is required."
+            exit 1
+          }
+
+          test -n "$GITOPS_TOKEN" || {
+            echo "GITOPS_TOKEN is required for a private GitOps repository."
+            exit 1
+          }
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPOSITORY }}
+          ref: ${{ env.GITOPS_BRANCH }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-bootstrap
+          mask-aws-account-id: true
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure access to the EKS cluster
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+        run: |
+          set -euo pipefail
+
+          aws eks update-kubeconfig \
+            --region "$AWS_REGION" \
+            --name "$CLUSTER_NAME"
+
+      - name: Validate root application manifest
+        shell: bash
+        working-directory: gitops
+        run: |
+          set -euo pipefail
+
+          test -f "$GITOPS_ROOT_APPLICATION_PATH" || {
+            echo "Root application manifest was not found:"
+            echo "$GITOPS_ROOT_APPLICATION_PATH"
+            exit 1
+          }
+
+          kubectl apply \
+            --dry-run=server \
+            --namespace "$ARGOCD_NAMESPACE" \
+            --filename "$GITOPS_ROOT_APPLICATION_PATH"
+
+      - name: Bootstrap the root application
+        shell: bash
+        working-directory: gitops
+        run: |
+          set -euo pipefail
+
+          kubectl apply \
+            --namespace "$ARGOCD_NAMESPACE" \
+            --filename "$GITOPS_ROOT_APPLICATION_PATH"
+
+      - name: Verify Argo CD applications
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kubectl wait \
+            --for=condition=Established \
+            customresourcedefinition/applications.argoproj.io \
+            --timeout=5m
+
+          kubectl get applications.argoproj.io \
+            --namespace "$ARGOCD_NAMESPACE"
+
+      - name: Add GitOps bootstrap summary
+        shell: bash
+        run: |
+          {
+            echo "### Argo CD GitOps bootstrap completed"
+            echo
+            echo "- Repository: \`${GITOPS_REPOSITORY}\`"
+            echo "- Branch: \`${GITOPS_BRANCH}\`"
+            echo "- Root application: \`${GITOPS_ROOT_APPLICATION_PATH}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
