@@ -1,3 +1,3 @@
 # Private EKS administration instance requires outbound HTTPS through NAT
 # for SSM, AWS APIs, kubectl, and Helm downloads.
-AVD-AWS-0104
+AWS-0104

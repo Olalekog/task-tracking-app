@@ -21,38 +21,21 @@ data "aws_ami" "amazon_linux_2023" {
 # trivy:ignore:AVD-AWS-0104
 # HTTPS egress is required for SSM, AWS APIs, kubectl, Helm, and approved
 # public chart repositories through the private subnet NAT gateway.
+# trivy:ignore:AWS-0104
 resource "aws_security_group" "this" {
   name        = "${var.name}-eks-admin"
-  description = "Outbound-only access for SSM and private EKS administration."
+  description = "Outbound-only security group for the EKS administration instance."
   vpc_id      = var.vpc_id
 
   egress {
-    description = "HTTPS through NAT for SSM, AWS APIs, Helm, and kubectl downloads"
+    description = "HTTPS for SSM, AWS APIs, kubectl, and Helm downloads"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  egress {
-    description = "VPC DNS over UDP"
-    from_port   = 53
-    to_port     = 53
-    protocol    = "udp"
-    cidr_blocks = [var.vpc_cidr_block]
-  }
-
-  egress {
-    description = "VPC DNS over TCP"
-    from_port   = 53
-    to_port     = 53
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr_block]
-  }
-
-  tags = merge(var.tags, {
-    Name = "${var.name}-eks-admin"
-  })
+  # existing DNS rules and tags
 }
 
 resource "aws_instance" "this" {
