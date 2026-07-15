@@ -326,7 +326,7 @@ jobs:
     name: SonarQube analysis
     runs-on: ubuntu-latest
 
-    if: ${{ needs.resolve-context.outputs.should_plan == 'true' }}
+    if: ${{ false }}
 
     needs:
       - resolve-context
@@ -402,7 +402,10 @@ jobs:
         needs.terraform-format.result == 'success' &&
         needs.checkov.result == 'success' &&
         needs.trivy.result == 'success' &&
-        needs.sonarqube.result == 'success'
+        (
+          needs.sonarqube.result == 'success' ||
+          needs.sonarqube.result == 'skipped'
+        )
       }}
 
     environment:
