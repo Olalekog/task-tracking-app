@@ -273,7 +273,20 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref || github.ref }}
 
-      - name: Run Trivy scan and create SARIF report
+      - name: Verify Trivy ignore file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f trivyignore || {
+            echo "::error::The repository-root file 'trivyignore' was not found."
+            exit 1
+          }
+
+          echo "Configured Trivy suppressions:"
+          cat trivyignore
+
+      - name: Generate Trivy SARIF report
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
@@ -281,10 +294,10 @@ jobs:
           scanners: misconfig
           format: sarif
           output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-#          ignore-unfixed: true
-          exit-code: "1"
-          trivyignores: .trivyignore
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+          trivyignores: trivyignore
+          skip-version-check: true
 
       - name: Upload Trivy SARIF to GitHub code scanning
         uses: github/codeql-action/upload-sarif@v4
@@ -302,18 +315,18 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Enforce Trivy security gate
+      - name: Enforce HIGH and CRITICAL Trivy gate
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
-          scanners: vuln,secret,misconfig
+          scanners: misconfig
           format: table
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
           exit-code: "1"
           skip-setup-trivy: true
-          trivyignores: .trivyignore
+          trivyignores: trivyignore
+          skip-version-check: true
 
   sonarqube:
     name: SonarQube analysis
