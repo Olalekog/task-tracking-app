@@ -1,5 +1,7 @@
 locals {
-  tags = merge(var.tags, { Project = var.name })
+  tags = merge(var.tags, {
+    Project = var.name
+  })
 
   eks_cluster_role_name = "${var.name}-eks-cluster-role"
   eks_node_role_name    = "${var.name}-eks-node-role"
@@ -7,60 +9,85 @@ locals {
 
   iam_roles = {
     (local.eks_cluster_role_name) = {
+      description             = "IAM role for the EKS control plane"
+      create_instance_profile = false
+      inline_policies         = {}
+
       assume_role_policy = {
         Statement = [{
           Effect = var.iam_trust_statement_effect
+
           Principal = {
             Service = var.eks_service_principal
           }
+
           Action = var.iam_assume_role_action
         }]
       }
+
       managed_policy_arns = var.eks_cluster_policy_arns
     }
+
     (local.eks_node_role_name) = {
+      description             = "IAM role for the EKS worker nodes"
+      create_instance_profile = false
+      inline_policies         = {}
+
       assume_role_policy = {
         Statement = [{
           Effect = var.iam_trust_statement_effect
+
           Principal = {
             Service = var.ec2_service_principal
           }
+
           Action = var.iam_assume_role_action
         }]
       }
+
       managed_policy_arns = var.eks_node_policy_arns
     }
+
     (local.eks_admin_role_name) = {
       description             = "SSM-managed administration role for the private EKS cluster"
       create_instance_profile = true
+
       assume_role_policy = {
         Statement = [{
           Effect = var.iam_trust_statement_effect
+
           Principal = {
             Service = var.ec2_service_principal
           }
+
           Action = var.iam_assume_role_action
         }]
       }
+
       managed_policy_arns = [
         "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
       ]
+
       inline_policies = {
         EksAdministration = {
           Statement = [
             {
               Effect = "Allow"
+
               Action = [
                 "eks:DescribeCluster"
               ]
+
               Resource = "arn:aws:eks:${var.region}:*:cluster/${var.cluster_name}"
             },
             {
               Effect = "Allow"
+
               Action = [
                 "s3:GetObject",
                 "s3:GetObjectVersion"
               ]
+
               Resource = "${module.s3.bucket_arn}/platform-install/*"
             }
           ]
@@ -86,6 +113,7 @@ locals {
     })
   }
 }
+
 
 module "kms" {
   source = "../../modules/kms"
