@@ -27,7 +27,7 @@ concurrency:
 
 env:
   DEFAULT_AWS_REGION: us-east-1
-  DEFAULT_GITOPS_BRANCH: main
+  DEFAULT_GITOPS_BRANCH: dev
 
 jobs:
   changes:
