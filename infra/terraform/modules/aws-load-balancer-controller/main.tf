@@ -211,7 +211,7 @@ resource "helm_release" "this" {
 
   set {
     name  = "serviceAccount.name"
-    value = value = kubernetes_service_account.this[count.index].metadata[0].name
+    value = kubernetes_service_account.this[count.index].metadata[0].name
   }
 
   depends_on = [
