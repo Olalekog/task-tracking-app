@@ -39,23 +39,5 @@ tags = {
   ManagedBy   = "terraform"
 }
 
-variable "eks_endpoint_public_access" {
-  description = "Temporarily enable restricted public EKS access."
-  type        = bool
-  default     = false
-}
-
-variable "eks_public_access_cidrs" {
-  description = "CIDRs allowed to reach the public EKS endpoint."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition = alltrue([
-      for cidr in var.eks_public_access_cidrs :
-      cidr != "0.0.0.0/0" && cidr != "::/0"
-    ])
-
-    error_message = "EKS public access cannot allow the entire internet."
-  }
-}
+eks_endpoint_public_access = false
+eks_public_access_cidrs    = []
