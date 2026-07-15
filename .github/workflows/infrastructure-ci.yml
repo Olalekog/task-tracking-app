@@ -5,13 +5,8 @@ on:
     branches:
       - dev
     paths:
-      - "modules/**"
-      - "environments/**"
-      - "bootstrap/**"
+      - "infra/terraform/**"
       - ".github/workflows/infrastructure-ci.yml"
-      - "*.tf"
-      - "*.tfvars"
-      - ".terraform.lock.hcl"
 
   pull_request:
     branches:
@@ -24,13 +19,8 @@ on:
       - ready_for_review
       - closed
     paths:
-      - "modules/**"
-      - "environments/**"
-      - "bootstrap/**"
+      - "infra/terraform/**"
       - ".github/workflows/infrastructure-ci.yml"
-      - "*.tf"
-      - "*.tfvars"
-      - ".terraform.lock.hcl"
 
   workflow_dispatch:
 

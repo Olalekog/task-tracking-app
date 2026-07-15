@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - dev
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "database/**"
+      - ".github/workflows/image-build-ci.yml"
+
 
   pull_request:
     branches:
@@ -15,6 +21,11 @@ on:
       - reopened
       - ready_for_review
       - closed
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "database/**"
+      - ".github/workflows/image-build-ci.yml"
 
 permissions:
   contents: read
