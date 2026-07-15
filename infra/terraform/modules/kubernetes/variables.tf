@@ -38,6 +38,20 @@ variable "endpoint_public_access" {
   type        = bool
 }
 
+variable "public_access_cidrs" {
+  description = "CIDR blocks permitted to reach the public EKS API endpoint."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for cidr in var.public_access_cidrs :
+      cidr != "0.0.0.0/0" && cidr != "::/0"
+    ])
+    error_message = "The EKS public endpoint must never allow 0.0.0.0/0 or ::/0."
+  }
+}
+
 variable "node_group_name" {
   description = "Managed node group name."
   type        = string

@@ -126,7 +126,8 @@ module "kubernetes" {
   subnet_ids                   = module.vpc.private_subnet_ids
   node_subnet_ids              = module.vpc.private_subnet_ids
   endpoint_private_access      = true
-  endpoint_public_access       = false
+  endpoint_public_access       = var.eks_endpoint_public_access
+  public_access_cidrs          = var.eks_public_access_cidrs
   node_group_name              = var.node_group_name
   worker_desired_size          = var.worker_desired_size
   worker_min_size              = var.worker_min_size

@@ -613,22 +613,66 @@ jobs:
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true"
 
-      - name: Download approved Terraform plan
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.terraform-plan.outputs.plan_artifact }}
-          path: ${{ needs.resolve-context.outputs.working_directory }}
-
-      - name: Apply Terraform plan
+      - name: Discover GitHub runner public CIDR
+        id: runner-network
         shell: bash
         run: |
           set -euo pipefail
 
-          terraform apply \
-            -input=false \
-            -auto-approve \
-            -lock-timeout=5m \
-            tfplan
+          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '[:space:]')"
+
+          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+            echo "Unable to determine a valid runner IPv4 address."
+            exit 1
+          }
+
+          runner_cidr="${runner_ip}/32"
+          echo "runner_cidr=$runner_cidr" >> "$GITHUB_OUTPUT"
+          echo "Using temporary EKS API CIDR: $runner_cidr"
+
+      - name: Temporarily open an existing EKS endpoint to this runner
+        id: existing-cluster
+        shell: bash
+        env:
+          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
+        run: |
+          set -euo pipefail
+
+          cluster_name="$(terraform output -raw cluster_name 2>/dev/null || true)"
+
+          if [[ -z "$cluster_name" ]]; then
+            echo "No existing EKS cluster found in Terraform state."
+            echo "cluster_name=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! aws eks describe-cluster             --region "$AWS_REGION"             --name "$cluster_name" >/dev/null 2>&1; then
+            echo "Cluster $cluster_name does not exist yet."
+            echo "cluster_name=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$cluster_name"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=true,publicAccessCidrs="$RUNNER_CIDR"             >/dev/null
+
+          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$cluster_name"
+
+          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
+
+      - name: Create runner-specific Terraform apply plan
+        shell: bash
+        env:
+          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
+        run: |
+          set -euo pipefail
+
+          terraform plan             -input=false             -no-color             -lock-timeout=5m             -var-file="${{ needs.resolve-context.outputs.environment }}.tfvars"             -var="environment=${{ needs.resolve-context.outputs.environment }}"             -var="project_name=${PROJECT_NAME}"             -var="eks_endpoint_public_access=true"             -var="eks_public_access_cidrs=[\"${RUNNER_CIDR}\"]"             -out=tfapply
+
+      - name: Apply runner-specific Terraform plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform apply             -input=false             -auto-approve             -lock-timeout=5m             tfapply
 
       - name: Read platform outputs
         id: platform-outputs
@@ -663,6 +707,25 @@ jobs:
           path: ${{ needs.resolve-context.outputs.working_directory }}/terraform-outputs-${{ needs.resolve-context.outputs.environment }}.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Disable the EKS public endpoint
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cluster_name="$(terraform output -raw cluster_name 2>/dev/null || true)"
+
+          if [[ -z "$cluster_name" ]]; then
+            echo "No EKS cluster output is available; nothing to close."
+            exit 0
+          fi
+
+          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$cluster_name"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=false             >/dev/null
+
+          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$cluster_name"
+
+          echo "The EKS public endpoint has been disabled."
 
       - name: Deployment summary
         if: success()
@@ -741,6 +804,28 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-argocd
           mask-aws-account-id: true
+
+      - name: Discover runner public CIDR
+        id: runner-network
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '[:space:]')"
+          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || exit 1
+          echo "runner_cidr=${runner_ip}/32" >> "$GITHUB_OUTPUT"
+
+      - name: Temporarily allow this runner to reach the EKS API
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
+        run: |
+          set -euo pipefail
+
+          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=true,publicAccessCidrs="$RUNNER_CIDR"             >/dev/null
+
+          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
@@ -840,6 +925,18 @@ jobs:
             echo "- Chart version: \`${ARGOCD_CHART_VERSION}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Disable the EKS public endpoint
+        if: always()
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+        run: |
+          set -euo pipefail
+
+          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=false             >/dev/null
+
+          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
+
   bootstrap-argocd:
     name: Bootstrap Argo CD root application
     runs-on: ubuntu-latest
@@ -898,6 +995,28 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-bootstrap
           mask-aws-account-id: true
+
+      - name: Discover runner public CIDR
+        id: runner-network
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '[:space:]')"
+          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || exit 1
+          echo "runner_cidr=${runner_ip}/32" >> "$GITHUB_OUTPUT"
+
+      - name: Temporarily allow this runner to reach the EKS API
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
+        run: |
+          set -euo pipefail
+
+          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=true,publicAccessCidrs="$RUNNER_CIDR"             >/dev/null
+
+          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
@@ -963,4 +1082,16 @@ jobs:
             echo "- Branch: \`${GITOPS_BRANCH}\`"
             echo "- Root application: \`${GITOPS_ROOT_APPLICATION_PATH}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Disable the EKS public endpoint
+        if: always()
+        shell: bash
+        env:
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+        run: |
+          set -euo pipefail
+
+          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=false             >/dev/null
+
+          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
 

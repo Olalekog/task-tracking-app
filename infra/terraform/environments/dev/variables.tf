@@ -385,3 +385,24 @@ variable "tags" {
     ManagedBy   = "terraform"
   }
 }
+
+
+variable "eks_endpoint_public_access" {
+  description = "Temporarily expose the EKS API endpoint for an approved CI runner."
+  type        = bool
+  default     = false
+}
+
+variable "eks_public_access_cidrs" {
+  description = "Restricted CIDRs permitted to reach the public EKS API endpoint."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for cidr in var.eks_public_access_cidrs :
+      cidr != "0.0.0.0/0" && cidr != "::/0"
+    ])
+    error_message = "EKS public access cannot be open to the internet."
+  }
+}
