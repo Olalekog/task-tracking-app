@@ -60,7 +60,7 @@ variable "enable_dns_support" {
 variable "map_public_ip_on_launch" {
   description = "Map public IPs in public subnets."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "internet_route_cidr" {
@@ -172,7 +172,7 @@ variable "ecr_repositories" {
   }))
   default = {
     "task-tracking-dev-backend" = {
-      image_tag_mutability           = "MUTABLE"
+      image_tag_mutability           = "IMMUTABLE"
       scan_on_push                   = true
       encryption_type                = "KMS"
       kms_key_arn                    = ""
@@ -185,7 +185,7 @@ variable "ecr_repositories" {
       lifecycle_policy_rule_priority = 1
     }
     "task-tracking-dev-frontend" = {
-      image_tag_mutability           = "MUTABLE"
+      image_tag_mutability           = "IMMUTABLE"
       scan_on_push                   = true
       encryption_type                = "KMS"
       kms_key_arn                    = ""

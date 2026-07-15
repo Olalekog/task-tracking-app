@@ -7,8 +7,16 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine
 USER root
-RUN apk upgrade --no-cache
+RUN apk upgrade --no-cache \
+    && apk add --no-cache curl
 USER 101
+
 COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
 COPY --chown=101:101 --from=build /app/dist /usr/share/nginx/html
+
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl --fail --silent http://127.0.0.1:8080/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

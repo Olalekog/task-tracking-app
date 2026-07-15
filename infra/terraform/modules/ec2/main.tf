@@ -9,6 +9,15 @@ resource "aws_instance" "this" {
   key_name                    = each.value.key_name
   iam_instance_profile        = each.value.iam_instance_profile
   user_data                   = each.value.user_data
+  ebs_optimized               = true
+  monitoring                  = true
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "disabled"
+  }
 
   root_block_device {
     volume_size = each.value.root_volume_size

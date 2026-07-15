@@ -26,6 +26,8 @@ data "aws_iam_policy_document" "assume_role" {
   }
 }
 
+#checkov:skip=CKV_AWS_111:AWS Load Balancer Controller requires create/update actions; conditions and IRSA scope constrain use.
+#checkov:skip=CKV_AWS_356:AWS Load Balancer Controller official policy requires wildcard resources for APIs that do not support resource-level permissions.
 data "aws_iam_policy_document" "controller" {
   statement {
     sid       = "CreateServiceLinkedRole"

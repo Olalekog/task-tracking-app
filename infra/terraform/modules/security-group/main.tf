@@ -1,3 +1,4 @@
+#checkov:skip=CKV2_AWS_5:This reusable module returns the security group ID for attachment by calling modules.
 resource "aws_security_group" "this" {
   name        = var.name
   description = var.description

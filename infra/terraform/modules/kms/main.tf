@@ -2,6 +2,9 @@ data "aws_caller_identity" "current" {}
 
 data "aws_region" "current" {}
 
+#checkov:skip=CKV_AWS_111:KMS key policies use Resource "*" because the policy is attached to the key itself.
+#checkov:skip=CKV_AWS_356:KMS key policies require Resource "*" for key-policy statements.
+#checkov:skip=CKV_AWS_109:Account root administration is intentionally retained to prevent key lockout.
 data "aws_iam_policy_document" "this" {
   statement {
     sid = "EnableAccountPermissions"

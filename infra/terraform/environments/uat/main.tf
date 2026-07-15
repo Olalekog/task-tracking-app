@@ -123,10 +123,10 @@ module "kubernetes" {
   cluster_role_arn             = module.iam.role_arns[local.eks_cluster_role_name]
   node_role_arn                = module.iam.role_arns[local.eks_node_role_name]
   kubernetes_version           = var.kubernetes_version
-  subnet_ids                   = concat(module.vpc.public_subnet_ids, module.vpc.private_subnet_ids)
+  subnet_ids                   = module.vpc.private_subnet_ids
   node_subnet_ids              = module.vpc.private_subnet_ids
-  endpoint_private_access      = var.endpoint_private_access
-  endpoint_public_access       = var.endpoint_public_access
+  endpoint_private_access      = true
+  endpoint_public_access       = false
   node_group_name              = var.node_group_name
   worker_desired_size          = var.worker_desired_size
   worker_min_size              = var.worker_min_size
@@ -135,7 +135,7 @@ module "kubernetes" {
   max_unavailable              = var.node_group_max_unavailable
   enabled_cluster_log_types    = var.enabled_cluster_log_types
   kms_key_arn                  = module.kms.key_arn
-  cluster_encryption_resources = var.cluster_encryption_resources
+  cluster_encryption_resources = ["secrets"]
   tags                         = local.tags
 
   depends_on = [module.iam, module.cloudwatch]
