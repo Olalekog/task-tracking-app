@@ -73,8 +73,8 @@ env:
   ARGOCD_CHART_VERSION: ${{ vars.ARGOCD_CHART_VERSION }}
   ARGOCD_VALUES_FILE: ${{ vars.ARGOCD_VALUES_FILE || 'platform/argocd/values.yaml' }}
   GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
-  GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
-  GITOPS_ROOT_APPLICATION_PATH: ${{ vars.GITOPS_ROOT_APPLICATION_PATH || 'bootstrap/root-application.yaml' }}
+  GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'dev' }}
+#  GITOPS_ROOT_APPLICATION_PATH: ${{ vars.GITOPS_ROOT_APPLICATION_PATH || 'bootstrap/root-application.yaml' }}
   SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
   SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || 'task-tracking-infrastructure' }}
   SONAR_PROJECT_NAME: ${{ vars.SONAR_PROJECT_NAME || 'Task Tracking Infrastructure' }}
