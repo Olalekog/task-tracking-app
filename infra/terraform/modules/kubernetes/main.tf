@@ -40,3 +40,5 @@ resource "aws_eks_node_group" "workers" {
 
   tags = var.tags
 }
+
+

@@ -406,3 +406,9 @@ variable "eks_public_access_cidrs" {
     error_message = "EKS public access cannot be open to the internet."
   }
 }
+
+variable "install_kubernetes_resources" {
+  description = "Create Kubernetes and Helm resources."
+  type        = bool
+  default     = false
+}

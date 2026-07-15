@@ -120,6 +120,7 @@ module "kubernetes" {
   source = "../../modules/kubernetes"
 
   cluster_name                 = var.cluster_name
+  install_kubernetes_resources = false
   cluster_role_arn             = module.iam.role_arns[local.eks_cluster_role_name]
   node_role_arn                = module.iam.role_arns[local.eks_node_role_name]
   kubernetes_version           = var.kubernetes_version

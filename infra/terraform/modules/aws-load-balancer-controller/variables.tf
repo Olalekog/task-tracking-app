@@ -50,3 +50,9 @@ variable "tags" {
   description = "Common tags."
   type        = map(string)
 }
+
+variable "install_kubernetes_resources" {
+  description = "Create Kubernetes and Helm resources."
+  type        = bool
+  default     = false
+}
