@@ -33,9 +33,9 @@ s3_bucket_name = "task-tracking-uat-artifacts"
 
 ecr_repositories = {
   "task-tracking-uat-backend" = {
-    image_tag_mutability = "IMMUTABLE"
-    scan_on_push = true
-    encryption_type = "KMS"
+    image_tag_mutability           = "IMMUTABLE"
+    scan_on_push                   = true
+    encryption_type                = "KMS"
     kms_key_arn                    = ""
     force_delete                   = false
     lifecycle_policy_max_images    = 20
@@ -46,9 +46,9 @@ ecr_repositories = {
     lifecycle_policy_rule_priority = 1
   }
   "task-tracking-uat-frontend" = {
-    image_tag_mutability = "IMMUTABLE"
-    scan_on_push = true
-    encryption_type = "KMS"
+    image_tag_mutability           = "IMMUTABLE"
+    scan_on_push                   = true
+    encryption_type                = "KMS"
     kms_key_arn                    = ""
     force_delete                   = false
     lifecycle_policy_max_images    = 20
