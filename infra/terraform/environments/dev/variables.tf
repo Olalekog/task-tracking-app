@@ -4,11 +4,6 @@ variable "region" {
   default     = "us-east-1"
 }
 
-variable "aws_assume_role_arn" {
-  description = "Existing IAM role ARN used by Terraform AWS provider."
-  type        = string
-}
-
 variable "name" {
   description = "Environment name prefix."
   type        = string

@@ -1,7 +1,5 @@
 region = "us-east-1"
 
-aws_assume_role_arn = "arn:aws:iam::866934333672:role/Reactjs-application-role"
-
 name         = "task-tracking-dev"
 cluster_name = "task-tracking-dev-eks"
 
