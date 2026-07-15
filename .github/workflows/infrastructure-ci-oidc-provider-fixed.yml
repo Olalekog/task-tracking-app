@@ -417,6 +417,9 @@ jobs:
     environment:
       name: ${{ needs.resolve-context.outputs.environment }}
 
+    env:
+      TF_VAR_aws_assume_role_arn: ""
+
     defaults:
       run:
         working-directory: ${{ needs.resolve-context.outputs.working_directory }}
@@ -496,6 +499,26 @@ jobs:
 
           echo "Terraform root module and environment variable file were found."
 
+      - name: Validate AWS provider authentication model
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -R --line-number --include='*.tf'             -E '^[[:space:]]*assume_role[[:space:]]*\{'             .; then
+            echo "::error::Terraform provider contains an assume_role block."
+            echo "The workflow already assumes ROLE_TO_ASSUME through GitHub OIDC."
+            echo "Remove the provider assume_role block to avoid attempting to assume the same role twice."
+            exit 1
+          fi
+
+          if grep -R --line-number             --include='*.tf'             --include='*.tfvars'             'aws_assume_role_arn'             .; then
+            echo "::error::Obsolete aws_assume_role_arn configuration was found."
+            echo "Remove it from provider.tf, variables.tf, and environment tfvars."
+            exit 1
+          fi
+
+          echo "Terraform AWS provider will use the credentials supplied by GitHub OIDC."
+
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -535,8 +558,7 @@ jobs:
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=${{ needs.resolve-context.outputs.state_key }}" \
             -backend-config="region=${AWS_REGION}" \
-            -backend-config="encrypt=true" \
-            -backend-config="use_lockfile=true"
+            -backend-config="encrypt=true"
 
       - name: Validate Terraform
         run: terraform validate -no-color
@@ -602,6 +624,9 @@ jobs:
     environment:
       name: ${{ needs.resolve-context.outputs.environment }}
 
+    env:
+      TF_VAR_aws_assume_role_arn: ""
+
     defaults:
       run:
         working-directory: ${{ needs.resolve-context.outputs.working_directory }}
@@ -617,6 +642,26 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref }}
+
+      - name: Validate AWS provider authentication model
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -R --line-number --include='*.tf'             -E '^[[:space:]]*assume_role[[:space:]]*\{'             .; then
+            echo "::error::Terraform provider contains an assume_role block."
+            echo "The workflow already assumes ROLE_TO_ASSUME through GitHub OIDC."
+            echo "Remove the provider assume_role block to avoid attempting to assume the same role twice."
+            exit 1
+          fi
+
+          if grep -R --line-number             --include='*.tf'             --include='*.tfvars'             'aws_assume_role_arn'             .; then
+            echo "::error::Obsolete aws_assume_role_arn configuration was found."
+            echo "Remove it from provider.tf, variables.tf, and environment tfvars."
+            exit 1
+          fi
+
+          echo "Terraform AWS provider will use the credentials supplied by GitHub OIDC."
 
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v6
@@ -643,8 +688,7 @@ jobs:
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=${{ needs.resolve-context.outputs.state_key }}" \
             -backend-config="region=${AWS_REGION}" \
-            -backend-config="encrypt=true" \
-            -backend-config="use_lockfile=true"
+            -backend-config="encrypt=true"
 
       - name: Download approved Terraform plan
         uses: actions/download-artifact@v4
