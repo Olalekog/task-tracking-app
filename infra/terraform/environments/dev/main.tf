@@ -214,7 +214,6 @@ module "ec2" {
   tags      = local.tags
 }
 
-
 module "eks_admin" {
   source = "../../modules/eks-admin"
 
@@ -222,6 +221,7 @@ module "eks_admin" {
   region                = var.region
   cluster_name          = module.kubernetes.cluster_name
   vpc_id                = module.vpc.vpc_id
+  vpc_cidr_block        = var.vpc_cidr
   subnet_id             = module.vpc.private_subnet_ids[0]
   instance_profile_name = module.iam.instance_profile_names[local.eks_admin_role_name]
   instance_type         = var.eks_admin_instance_type
