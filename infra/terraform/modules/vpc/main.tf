@@ -82,9 +82,9 @@ resource "aws_internet_gateway" "this" {
 resource "aws_subnet" "public" {
   for_each = local.public_subnets
 
-  vpc_id                  = aws_vpc.this.id
-  availability_zone       = var.availability_zones[tonumber(each.key)]
-  cidr_block              = each.value
+  vpc_id            = aws_vpc.this.id
+  availability_zone = var.availability_zones[tonumber(each.key)]
+  cidr_block        = each.value
   # checkov:skip=CKV_AWS_130:Dev EKS worker nodes intentionally use public subnets and public IPv4 addresses.
   map_public_ip_on_launch = var.map_public_ip_on_launch
 
