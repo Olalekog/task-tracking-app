@@ -1,0 +1,1058 @@
+name: Application CI and GitOps Promotion
+
+on:
+  push:
+    branches:
+      - dev
+
+  pull_request:
+    branches:
+      - uat
+      - production
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - closed
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+
+concurrency:
+  group: task-tracking-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  DEFAULT_AWS_REGION: us-east-1
+  DEFAULT_GITOPS_BRANCH: dev
+
+jobs:
+  changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      ci: ${{ steps.filter.outputs.ci }}
+      security: ${{ steps.filter.outputs.security }}
+      app: ${{ steps.filter.outputs.app }}
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'database/**'
+
+            frontend:
+              - 'frontend/**'
+
+
+            ci:
+              - '.github/workflows/**'
+
+            security:
+              - 'backend/**'
+              - 'frontend/**'
+              - 'database/**'
+              - 'docker-compose.yml'
+              - '.github/workflows/**'
+
+            app:
+              - 'backend/**'
+              - 'frontend/**'
+              - 'database/**'
+
+  validate-promotion:
+    name: Validate promotion path
+    runs-on: ubuntu-latest
+
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        github.event.action != 'closed'
+      }}
+
+    steps:
+      - name: Enforce branch promotion order
+        shell: bash
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref }}
+          TARGET_BRANCH: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          case "${SOURCE_BRANCH}:${TARGET_BRANCH}" in
+            dev:uat)
+              echo "Valid promotion path: dev -> uat"
+              ;;
+
+            uat:production)
+              echo "Valid promotion path: uat -> production"
+              ;;
+
+            *)
+              echo "Invalid promotion path: ${SOURCE_BRANCH} -> ${TARGET_BRANCH}"
+              echo "Allowed paths:"
+              echo "  dev -> uat"
+              echo "  uat -> production"
+              exit 1
+              ;;
+          esac
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+
+    if: >-
+      ${{
+        (
+          github.event_name == 'push' ||
+          (
+            github.event_name == 'pull_request' &&
+            github.event.action != 'closed' &&
+            (
+              (github.head_ref == 'dev' && github.base_ref == 'uat') ||
+              (github.head_ref == 'uat' && github.base_ref == 'production')
+            )
+          )
+        ) &&
+        (
+          needs.changes.outputs.frontend == 'true' ||
+          needs.changes.outputs.ci == 'true'
+        )
+      }}
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+  backend:
+    name: Backend import check
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+
+    if: >-
+      ${{
+        (
+          github.event_name == 'push' ||
+          (
+            github.event_name == 'pull_request' &&
+            github.event.action != 'closed' &&
+            (
+              (github.head_ref == 'dev' && github.base_ref == 'uat') ||
+              (github.head_ref == 'uat' && github.base_ref == 'production')
+            )
+          )
+        ) &&
+        (
+          needs.changes.outputs.backend == 'true' ||
+          needs.changes.outputs.ci == 'true'
+        )
+      }}
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile backend modules
+        run: python -m compileall app
+
+  checkov:
+    name: Checkov scan
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+
+    if: >-
+      ${{
+        (
+          github.event_name == 'push' ||
+          (
+            github.event_name == 'pull_request' &&
+            github.event.action != 'closed' &&
+            (
+              (github.head_ref == 'dev' && github.base_ref == 'uat') ||
+              (github.head_ref == 'uat' && github.base_ref == 'production')
+            )
+          )
+        ) &&
+        needs.changes.outputs.security == 'true'
+      }}
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: dockerfile,github_actions
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false
+
+      - name: Upload Checkov SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+
+      - name: Upload Checkov scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-scan-result
+          path: checkov.sarif
+          if-no-files-found: warn
+
+  trivy-repository:
+    name: Trivy repository scan
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+
+    if: >-
+      ${{
+        (
+          github.event_name == 'push' ||
+          (
+            github.event_name == 'pull_request' &&
+            github.event.action != 'closed' &&
+            (
+              (github.head_ref == 'dev' && github.base_ref == 'uat') ||
+              (github.head_ref == 'uat' && github.base_ref == 'production')
+            )
+          )
+        ) &&
+        needs.changes.outputs.security == 'true'
+      }}
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload Trivy SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+
+      - name: Upload Trivy filesystem scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-filesystem-scan-result
+          path: trivy-fs.sarif
+          if-no-files-found: warn
+
+  # sonarqube:
+  #   name: SonarQube analysis
+  #   runs-on: ubuntu-latest
+
+  #   needs:
+  #     - changes
+
+  #   if: >-
+  #     ${{
+  #       (
+  #         github.event_name == 'push' ||
+  #         (
+  #           github.event_name == 'pull_request' &&
+  #           github.event.action != 'closed' &&
+  #           (
+  #             (github.head_ref == 'dev' && github.base_ref == 'uat') ||
+  #             (github.head_ref == 'uat' && github.base_ref == 'production')
+  #           )
+  #         )
+  #       ) &&
+  #       (
+  #         needs.changes.outputs.app == 'true' ||
+  #         needs.changes.outputs.ci == 'true'
+  #       )
+  #     }}
+
+  #   env:
+  #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  #     SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+  #   steps:
+  #     - name: Checkout source repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+
+  #     - name: Validate SonarQube configuration
+  #       shell: bash
+  #       run: |
+  #         set -euo pipefail
+
+  #         test -n "$SONAR_TOKEN" || {
+  #           echo "SONAR_TOKEN secret is required."
+  #           exit 1
+  #         }
+
+  #         test -n "$SONAR_HOST_URL" || {
+  #           echo "SONAR_HOST_URL variable is required."
+  #           exit 1
+  #         }
+
+  #     - name: Run SonarQube scan and wait for quality gate
+  #       uses: SonarSource/sonarqube-scan-action@v4
+  #       with:
+  #         args: >
+  #           -Dsonar.qualitygate.wait=true
+  #           -Dsonar.qualitygate.timeout=300
+
+  build-scan-push-images:
+    name: Build images, scan with Trivy, then push to ECR
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+      - frontend
+      - backend
+      - checkov
+      - trivy-repository
+      - sonarqube
+
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/dev' &&
+        (
+          needs.changes.outputs.app == 'true' ||
+          needs.changes.outputs.ci == 'true'
+        ) &&
+        (
+          needs.frontend.result == 'success' ||
+          needs.frontend.result == 'skipped'
+        ) &&
+        (
+          needs.backend.result == 'success' ||
+          needs.backend.result == 'skipped'
+        ) &&
+        (
+          needs.checkov.result == 'success' ||
+          needs.checkov.result == 'skipped'
+        ) &&
+        (
+          needs.trivy-repository.result == 'success' ||
+          needs.trivy-repository.result == 'skipped'
+        ) &&
+        (
+          needs.sonarqube.result == 'success' ||
+          needs.sonarqube.result == 'skipped'
+        )
+      }}
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
+      ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
+      ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
+
+      BACKEND_CONTEXT: ./backend
+      BACKEND_DOCKERFILE: ./backend/Dockerfile
+      FRONTEND_CONTEXT: ./frontend
+      FRONTEND_DOCKERFILE: ./frontend/Dockerfile
+
+      BACKEND_CHANGED: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true' }}
+      FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.ci == 'true' }}
+
+    outputs:
+      backend_image: ${{ steps.image-refs.outputs.backend_image }}
+      frontend_image: ${{ steps.image-refs.outputs.frontend_image }}
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Validate ECR publishing configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$AWS_REGION" || {
+            echo "AWS_REGION is required."
+            exit 1
+          }
+
+          test -n "$ROLE_TO_ASSUME" || {
+            echo "ROLE_TO_ASSUME is required."
+            exit 1
+          }
+
+          test -n "$ECR_BACKEND_REPOSITORY" || {
+            echo "ECR_BACKEND_REPOSITORY is required."
+            exit 1
+          }
+
+          test -n "$ECR_FRONTEND_REPOSITORY" || {
+            echo "ECR_FRONTEND_REPOSITORY is required."
+            exit 1
+          }
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
+
+      - name: Verify ECR repositories exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for repository in \
+            "$ECR_BACKEND_REPOSITORY" \
+            "$ECR_FRONTEND_REPOSITORY"
+          do
+            aws ecr describe-repositories \
+              --repository-names "$repository" \
+              > /dev/null
+          done
+
+      - name: Build backend image
+        if: ${{ env.BACKEND_CHANGED == 'true' }}
+        shell: bash
+        run: |
+          docker build \
+            -t "$ECR_BACKEND_REPOSITORY:$GITHUB_SHA" \
+            backend
+
+      - name: Build frontend image
+        if: ${{ env.FRONTEND_CHANGED == 'true' }}
+        shell: bash
+        run: |
+          docker build \
+            -t "$ECR_FRONTEND_REPOSITORY:$GITHUB_SHA" \
+            frontend
+
+      - name: Scan backend image before push
+        if: ${{ env.BACKEND_CHANGED == 'true' }}
+        id: scan-backend-image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ECR_BACKEND_REPOSITORY }}:${{ github.sha }}
+          format: sarif
+          output: trivy-backend-image.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+        continue-on-error: true
+
+      - name: Scan frontend image before push
+        if: ${{ env.FRONTEND_CHANGED == 'true' }}
+        id: scan-frontend-image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ECR_FRONTEND_REPOSITORY }}:${{ github.sha }}
+          format: sarif
+          output: trivy-frontend-image.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+        continue-on-error: true
+
+      - name: Upload Trivy image scan artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-image-scan-results
+          path: |
+            trivy-backend-image.sarif
+            trivy-frontend-image.sarif
+          if-no-files-found: warn
+
+      - name: Enforce Trivy image scan gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if \
+            [ "$BACKEND_CHANGED" = "true" ] &&
+            [ "${{ steps.scan-backend-image.outcome }}" != "success" ]
+          then
+            echo "Trivy found blocking backend image vulnerabilities."
+            exit 1
+          fi
+
+          if \
+            [ "$FRONTEND_CHANGED" = "true" ] &&
+            [ "${{ steps.scan-frontend-image.outcome }}" != "success" ]
+          then
+            echo "Trivy found blocking frontend image vulnerabilities."
+            exit 1
+          fi
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag backend image for ECR
+        if: ${{ env.BACKEND_CHANGED == 'true' }}
+        shell: bash
+        run: |
+          docker tag \
+            "$ECR_BACKEND_REPOSITORY:$GITHUB_SHA" \
+            "${{ steps.ecr-login.outputs.registry }}/$ECR_BACKEND_REPOSITORY:$GITHUB_SHA"
+
+      - name: Tag frontend image for ECR
+        if: ${{ env.FRONTEND_CHANGED == 'true' }}
+        shell: bash
+        run: |
+          docker tag \
+            "$ECR_FRONTEND_REPOSITORY:$GITHUB_SHA" \
+            "${{ steps.ecr-login.outputs.registry }}/$ECR_FRONTEND_REPOSITORY:$GITHUB_SHA"
+
+      - name: Push backend image
+        if: ${{ env.BACKEND_CHANGED == 'true' }}
+        shell: bash
+        run: |
+          docker push \
+            "${{ steps.ecr-login.outputs.registry }}/$ECR_BACKEND_REPOSITORY:$GITHUB_SHA"
+
+      - name: Push frontend image
+        if: ${{ env.FRONTEND_CHANGED == 'true' }}
+        shell: bash
+        run: |
+          docker push \
+            "${{ steps.ecr-login.outputs.registry }}/$ECR_FRONTEND_REPOSITORY:$GITHUB_SHA"
+
+      - name: Export immutable image references
+        id: image-refs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$BACKEND_CHANGED" = "true" ]; then
+            echo \
+              "backend_image=${{ steps.ecr-login.outputs.registry }}/$ECR_BACKEND_REPOSITORY:$GITHUB_SHA" \
+              >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$FRONTEND_CHANGED" = "true" ]; then
+            echo \
+              "frontend_image=${{ steps.ecr-login.outputs.registry }}/$ECR_FRONTEND_REPOSITORY:$GITHUB_SHA" \
+              >> "$GITHUB_OUTPUT"
+          fi
+
+  update-dev-gitops:
+    name: Update development GitOps image tags
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+      - build-scan-push-images
+
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/dev' &&
+        needs.build-scan-push-images.result == 'success'
+      }}
+
+    environment:
+      name: dev
+
+    env:
+      GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
+      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'dev' }}
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+      BACKEND_IMAGE: ${{ needs.build-scan-push-images.outputs.backend_image || '' }}
+      FRONTEND_IMAGE: ${{ needs.build-scan-push-images.outputs.frontend_image || '' }}
+      BACKEND_CHANGED: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.ci == 'true' }}
+      FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.ci == 'true' }}
+
+    steps:
+      - name: Validate GitOps configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$GITOPS_REPOSITORY" || {
+            echo "GITOPS_REPOSITORY is required."
+            exit 1
+          }
+
+          test -n "$GITOPS_BRANCH" || {
+            echo "GITOPS_BRANCH is required."
+            exit 1
+          }
+
+          test -n "$GITOPS_TOKEN" || {
+            echo "GITOPS_TOKEN is required."
+            exit 1
+          }
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPOSITORY }}
+          ref: ${{ env.GITOPS_BRANCH }}
+          token: ${{ env.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Update development overlay images
+        working-directory: gitops
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$BACKEND_CHANGED" = "true" ]; then
+            test -n "$BACKEND_IMAGE" || {
+              echo "BACKEND_IMAGE is required."
+              exit 1
+            }
+          fi
+
+          if [ "$FRONTEND_CHANGED" = "true" ]; then
+            test -n "$FRONTEND_IMAGE" || {
+              echo "FRONTEND_IMAGE is required."
+              exit 1
+            }
+          fi
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("overlays/dev/kustomization.yaml")
+          lines = path.read_text().splitlines()
+          updates = {}
+
+          def split_image(image):
+              repository, tag = image.rsplit(":", 1)
+              return repository, tag
+
+          if os.environ["BACKEND_CHANGED"] == "true":
+              updates["task-tracking-backend"] = split_image(
+                  os.environ["BACKEND_IMAGE"]
+              )
+
+          if os.environ["FRONTEND_CHANGED"] == "true":
+              updates["task-tracking-frontend"] = split_image(
+                  os.environ["FRONTEND_IMAGE"]
+              )
+
+          current = None
+
+          for index, line in enumerate(lines):
+              stripped = line.strip()
+
+              if stripped.startswith("- name: "):
+                  current = stripped.removeprefix("- name: ")
+
+              elif current in updates and stripped.startswith("newName: "):
+                  lines[index] = (
+                      f"    newName: {updates[current][0]}"
+                  )
+
+              elif current in updates and stripped.startswith("newTag: "):
+                  lines[index] = (
+                      f"    newTag: {updates[current][1]}"
+                  )
+
+          path.write_text("\n".join(lines) + "\n")
+          PY
+
+          git diff -- overlays/dev/kustomization.yaml
+
+      - name: Commit and push development GitOps update
+        working-directory: gitops
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- overlays/dev/kustomization.yaml; then
+            echo "No development GitOps changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add overlays/dev/kustomization.yaml
+
+          git commit -m \
+            "Deploy task-tracking-app dev ${GITHUB_SHA}"
+
+          git push origin "$GITOPS_BRANCH"
+
+  promote-uat-gitops:
+    name: Promote development images to UAT
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'pull_request' &&
+        github.event.action == 'closed' &&
+        github.event.pull_request.merged == true &&
+        github.base_ref == 'uat' &&
+        github.head_ref == 'dev'      }}
+
+    environment:
+      name: uat
+
+    env:
+      GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
+      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+
+    steps:
+      - name: Validate GitOps configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$GITOPS_REPOSITORY" || {
+            echo "GITOPS_REPOSITORY is required."
+            exit 1
+          }
+
+          test -n "$GITOPS_BRANCH" || {
+            echo "GITOPS_BRANCH is required."
+            exit 1
+          }
+
+          test -n "$GITOPS_TOKEN" || {
+            echo "GITOPS_TOKEN is required."
+            exit 1
+          }
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPOSITORY }}
+          ref: ${{ env.GITOPS_BRANCH }}
+          token: ${{ env.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Promote development image versions to UAT
+        working-directory: gitops
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("overlays/dev/kustomization.yaml")
+          target_path = Path("overlays/uat/kustomization.yaml")
+
+          def read_images(path):
+              images = {}
+              current = None
+
+              for raw_line in path.read_text().splitlines():
+                  line = raw_line.strip()
+
+                  if line.startswith("- name: "):
+                      current = line.removeprefix("- name: ")
+                      images[current] = {}
+
+                  elif current and line.startswith("newName: "):
+                      images[current]["newName"] = (
+                          line.removeprefix("newName: ")
+                      )
+
+                  elif current and line.startswith("newTag: "):
+                      images[current]["newTag"] = (
+                          line.removeprefix("newTag: ")
+                      )
+
+              return images
+
+          source_images = read_images(source_path)
+          target_lines = target_path.read_text().splitlines()
+          current = None
+
+          for index, raw_line in enumerate(target_lines):
+              line = raw_line.strip()
+
+              if line.startswith("- name: "):
+                  current = line.removeprefix("- name: ")
+
+                  if current not in source_images:
+                      raise SystemExit(
+                          f"{current} was not found in the dev overlay."
+                      )
+
+              elif current and line.startswith("newName: "):
+                  target_lines[index] = (
+                      f"    newName: "
+                      f"{source_images[current]['newName']}"
+                  )
+
+              elif current and line.startswith("newTag: "):
+                  target_lines[index] = (
+                      f"    newTag: "
+                      f"{source_images[current]['newTag']}"
+                  )
+
+          target_path.write_text(
+              "\n".join(target_lines) + "\n"
+          )
+          PY
+
+          git diff -- overlays/uat/kustomization.yaml
+
+      - name: Commit and push UAT promotion
+        working-directory: gitops
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- overlays/uat/kustomization.yaml; then
+            echo "UAT already uses the development image versions."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add overlays/uat/kustomization.yaml
+
+          git commit -m \
+            "Promote task-tracking-app from dev to UAT"
+
+          git push origin "$GITOPS_BRANCH"
+
+  production-approval:
+    name: Approve production deployment
+    runs-on: ubuntu-latest
+
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        github.event.action == 'closed' &&
+        github.event.pull_request.merged == true &&
+        github.base_ref == 'production' &&
+        github.head_ref == 'uat'
+      }}
+
+    environment:
+      name: production
+
+    steps:
+      - name: Confirm approved production promotion
+        run: |
+          echo "Approved promotion from UAT to production."
+
+  promote-production-gitops:
+    name: Promote UAT images to production
+    runs-on: ubuntu-latest
+
+    needs:
+      - changes
+      - production-approval
+
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'pull_request' &&
+        github.event.action == 'closed' &&
+        github.event.pull_request.merged == true &&
+        github.base_ref == 'production' &&
+        github.head_ref == 'uat' &&
+        needs.production-approval.result == 'success'      }}
+
+    env:
+      GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
+      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+
+    steps:
+      - name: Validate GitOps configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$GITOPS_REPOSITORY" || {
+            echo "GITOPS_REPOSITORY is required."
+            exit 1
+          }
+
+          test -n "$GITOPS_BRANCH" || {
+            echo "GITOPS_BRANCH is required."
+            exit 1
+          }
+
+          test -n "$GITOPS_TOKEN" || {
+            echo "GITOPS_TOKEN is required."
+            exit 1
+          }
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPOSITORY }}
+          ref: ${{ env.GITOPS_BRANCH }}
+          token: ${{ env.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Promote UAT image versions to production
+        working-directory: gitops
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("overlays/uat/kustomization.yaml")
+          target_path = Path(
+              "overlays/production/kustomization.yaml"
+          )
+
+          def read_images(path):
+              images = {}
+              current = None
+
+              for raw_line in path.read_text().splitlines():
+                  line = raw_line.strip()
+
+                  if line.startswith("- name: "):
+                      current = line.removeprefix("- name: ")
+                      images[current] = {}
+
+                  elif current and line.startswith("newName: "):
+                      images[current]["newName"] = (
+                          line.removeprefix("newName: ")
+                      )
+
+                  elif current and line.startswith("newTag: "):
+                      images[current]["newTag"] = (
+                          line.removeprefix("newTag: ")
+                      )
+
+              return images
+
+          source_images = read_images(source_path)
+          target_lines = target_path.read_text().splitlines()
+          current = None
+
+          for index, raw_line in enumerate(target_lines):
+              line = raw_line.strip()
+
+              if line.startswith("- name: "):
+                  current = line.removeprefix("- name: ")
+
+                  if current not in source_images:
+                      raise SystemExit(
+                          f"{current} was not found in the UAT overlay."
+                      )
+
+              elif current and line.startswith("newName: "):
+                  target_lines[index] = (
+                      f"    newName: "
+                      f"{source_images[current]['newName']}"
+                  )
+
+              elif current and line.startswith("newTag: "):
+                  target_lines[index] = (
+                      f"    newTag: "
+                      f"{source_images[current]['newTag']}"
+                  )
+
+          target_path.write_text(
+              "\n".join(target_lines) + "\n"
+          )
+          PY
+
+          git diff -- overlays/production/kustomization.yaml
+
+      - name: Commit and push production promotion
+        working-directory: gitops
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- \
+            overlays/production/kustomization.yaml
+          then
+            echo "Production already uses the UAT image versions."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add overlays/production/kustomization.yaml
+
+          git commit -m \
+            "Promote task-tracking-app from UAT to production"
+
+          git push origin "$GITOPS_BRANCH"
