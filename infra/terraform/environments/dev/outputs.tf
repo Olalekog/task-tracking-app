@@ -24,15 +24,14 @@ output "ecr_repository_urls" {
 }
 
 output "aws_load_balancer_controller_iam_role_arn" {
-  description = "IAM role ARN used by the AWS Load Balancer Controller service account."
-  value       = module.aws_load_balancer_controller.iam_role_arn
+  description = "IAM role ARN for the AWS Load Balancer Controller."
+  value       = try(module.aws_load_balancer_controller[0].iam_role_arn, null)
 }
 
 output "aws_load_balancer_controller_helm_release_name" {
   description = "Helm release name for the AWS Load Balancer Controller."
-  value       = module.aws_load_balancer_controller.helm_release_name
+  value       = try(module.aws_load_balancer_controller[0].helm_release_name, null)
 }
-
 output "kms_key_arn" {
   description = "KMS key ARN."
   value       = module.kms.key_arn
