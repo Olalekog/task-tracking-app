@@ -141,7 +141,7 @@ jobs:
             exit 1
           fi
 
-          working_directory="environments/${environment}"
+          working_directory="infra/terraform/environments/${environment}"
           state_key="${PROJECT_NAME}/${environment}/terraform.tfstate"
 
           {
@@ -472,6 +472,27 @@ jobs:
             echo "but AWS_ACCOUNT_ID is $AWS_ACCOUNT_ID."
             exit 1
           fi
+
+      - name: Validate Terraform working directory
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          directory="${{ needs.resolve-context.outputs.working_directory }}"
+
+          test -d "$directory" || {
+            echo "::error::Terraform working directory does not exist: $directory"
+            echo "Repository root contents:"
+            find . -maxdepth 4 -type d | sort
+            exit 1
+          }
+
+          test -f "$directory/main.tf" || {
+            echo "::error::Terraform root module was not found at: $directory/main.tf"
+            exit 1
+          }
+
+          echo "Terraform working directory: $directory"
 
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v6
