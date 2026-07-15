@@ -405,9 +405,9 @@ jobs:
 
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      ROLE_TO_ASSUME: ${{ secrets.ROLE_TO_ASSUME || vars.ROLE_TO_ASSUME }}
-      ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
-      ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
+      ROLE_TO_ASSUME: arn:aws:iam::866934333672:role/Reactjs-application-role
+      ECR_BACKEND_REPOSITORY: task-tracking-dev-backend
+      ECR_FRONTEND_REPOSITORY: task-tracking-dev-frontend
 
       BACKEND_CONTEXT: ./backend
       BACKEND_DOCKERFILE: ./backend/Dockerfile
@@ -430,25 +430,35 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -n "$AWS_REGION" || {
-            echo "AWS_REGION is required."
-            exit 1
-          }
+          missing=0
 
-          test -n "$ROLE_TO_ASSUME" || {
-            echo "ROLE_TO_ASSUME is required."
-            exit 1
-          }
+          if [ -z "$AWS_REGION" ]; then
+            echo "::error::AWS_REGION is not configured."
+            missing=1
+          fi
 
-          test -n "$ECR_BACKEND_REPOSITORY" || {
-            echo "ECR_BACKEND_REPOSITORY is required."
-            exit 1
-          }
+          if [ -z "$ROLE_TO_ASSUME" ]; then
+            echo "::error::ROLE_TO_ASSUME is not configured."
+            missing=1
+          fi
 
-          test -n "$ECR_FRONTEND_REPOSITORY" || {
-            echo "ECR_FRONTEND_REPOSITORY is required."
+          if [ -z "$ECR_BACKEND_REPOSITORY" ]; then
+            echo "::error::ECR_BACKEND_REPOSITORY is not configured."
+            missing=1
+          fi
+
+          if [ -z "$ECR_FRONTEND_REPOSITORY" ]; then
+            echo "::error::ECR_FRONTEND_REPOSITORY is not configured."
+            missing=1
+          fi
+
+          if [ "$missing" -ne 0 ]; then
             exit 1
-          }
+          fi
+
+          echo "AWS region: $AWS_REGION"
+          echo "Backend ECR repository: $ECR_BACKEND_REPOSITORY"
+          echo "Frontend ECR repository: $ECR_FRONTEND_REPOSITORY"
 
       - name: Configure AWS credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -525,23 +535,55 @@ jobs:
       - name: Enforce Trivy image scan gate
         if: always()
         shell: bash
+        env:
+          BACKEND_SCAN_OUTCOME: ${{ steps.scan-backend-image.outcome }}
+          FRONTEND_SCAN_OUTCOME: ${{ steps.scan-frontend-image.outcome }}
         run: |
           set -euo pipefail
 
-          if \
-            [ "$BACKEND_CHANGED" = "true" ] &&
-            [ "${{ steps.scan-backend-image.outcome }}" != "success" ]
-          then
-            echo "Trivy found blocking backend image vulnerabilities."
-            exit 1
+          echo "Backend changed: $BACKEND_CHANGED"
+          echo "Backend scan outcome: $BACKEND_SCAN_OUTCOME"
+          echo "Frontend changed: $FRONTEND_CHANGED"
+          echo "Frontend scan outcome: $FRONTEND_SCAN_OUTCOME"
+
+          if [ "$BACKEND_CHANGED" = "true" ]; then
+            case "$BACKEND_SCAN_OUTCOME" in
+              success)
+                echo "Backend image passed Trivy scanning."
+                ;;
+              failure)
+                echo "Trivy found blocking backend image vulnerabilities."
+                exit 1
+                ;;
+              skipped)
+                echo "Backend Trivy scan was skipped because an earlier step failed."
+                exit 1
+                ;;
+              *)
+                echo "Unexpected backend Trivy outcome: $BACKEND_SCAN_OUTCOME"
+                exit 1
+                ;;
+            esac
           fi
 
-          if \
-            [ "$FRONTEND_CHANGED" = "true" ] &&
-            [ "${{ steps.scan-frontend-image.outcome }}" != "success" ]
-          then
-            echo "Trivy found blocking frontend image vulnerabilities."
-            exit 1
+          if [ "$FRONTEND_CHANGED" = "true" ]; then
+            case "$FRONTEND_SCAN_OUTCOME" in
+              success)
+                echo "Frontend image passed Trivy scanning."
+                ;;
+              failure)
+                echo "Trivy found blocking frontend image vulnerabilities."
+                exit 1
+                ;;
+              skipped)
+                echo "Frontend Trivy scan was skipped because an earlier step failed."
+                exit 1
+                ;;
+              *)
+                echo "Unexpected frontend Trivy outcome: $FRONTEND_SCAN_OUTCOME"
+                exit 1
+                ;;
+            esac
           fi
 
       - name: Login to Amazon ECR
