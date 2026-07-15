@@ -85,7 +85,8 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.this.id
   availability_zone       = var.availability_zones[tonumber(each.key)]
   cidr_block              = each.value
-  map_public_ip_on_launch = false
+  # checkov:skip=CKV_AWS_130:Dev EKS worker nodes intentionally use public subnets and public IPv4 addresses.
+  map_public_ip_on_launch = var.map_public_ip_on_launch
 
   tags = merge(
     var.tags,
@@ -93,6 +94,7 @@ resource "aws_subnet" "public" {
     {
       Name                                        = "${var.name}-public-${var.availability_zones[tonumber(each.key)]}"
       "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+      "kubernetes.io/role/elb"                    = "1"
     },
   )
 }

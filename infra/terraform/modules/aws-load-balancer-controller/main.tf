@@ -168,6 +168,7 @@ resource "aws_iam_role_policy_attachment" "this" {
 
 resource "kubernetes_service_account" "this" {
   count = var.install_kubernetes_resources ? 1 : 0
+
   metadata {
     name      = var.service_account_name
     namespace = var.namespace
@@ -182,7 +183,8 @@ resource "kubernetes_service_account" "this" {
 }
 
 resource "helm_release" "this" {
-  count      = var.install_kubernetes_resources ? 1 : 0
+  count = var.install_kubernetes_resources ? 1 : 0
+
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"

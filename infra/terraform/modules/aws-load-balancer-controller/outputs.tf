@@ -3,15 +3,7 @@ output "iam_role_arn" {
   value       = aws_iam_role.this.arn
 }
 
-# output "helm_release_name" {
-#   description = "Helm release name for the AWS Load Balancer Controller."
-#   value       = helm_release.this.name
-# }
-
 output "helm_release_name" {
-  value = try(helm_release.this[0].name, null)
-}
-
-output "service_account_name" {
-  value = try(kubernetes_service_account.this[0].metadata[0].name, null)
+  description = "Helm release name when Terraform manages the release."
+  value       = try(helm_release.this[0].name, null)
 }

@@ -31,7 +31,7 @@ nat_gateway_count   = 1
 worker_desired_size   = 2
 worker_min_size       = 2
 worker_max_size       = 4
-worker_instance_types = ["t2.micro"]
+worker_instance_types = ["t3.medium"]
 
 tags = {
   Environment = "dev"
@@ -39,5 +39,7 @@ tags = {
   ManagedBy   = "terraform"
 }
 
-eks_endpoint_public_access = false
-eks_public_access_cidrs    = []
+map_public_ip_on_launch = false
+
+
+eks_admin_instance_type = "t3.micro"

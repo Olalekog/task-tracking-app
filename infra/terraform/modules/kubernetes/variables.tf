@@ -39,17 +39,9 @@ variable "endpoint_public_access" {
 }
 
 variable "public_access_cidrs" {
-  description = "CIDR blocks permitted to reach the public EKS API endpoint."
+  description = "CIDR blocks allowed to reach the public EKS API endpoint."
   type        = list(string)
   default     = []
-
-  validation {
-    condition = alltrue([
-      for cidr in var.public_access_cidrs :
-      cidr != "0.0.0.0/0" && cidr != "::/0"
-    ])
-    error_message = "The EKS public endpoint must never allow 0.0.0.0/0 or ::/0."
-  }
 }
 
 variable "node_group_name" {
@@ -100,4 +92,10 @@ variable "cluster_encryption_resources" {
 variable "tags" {
   description = "Common tags."
   type        = map(string)
+}
+
+
+variable "admin_role_arn" {
+  description = "IAM role ARN granted cluster administrator access through an EKS access entry."
+  type        = string
 }

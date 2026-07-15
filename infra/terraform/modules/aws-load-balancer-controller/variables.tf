@@ -51,8 +51,9 @@ variable "tags" {
   type        = map(string)
 }
 
+
 variable "install_kubernetes_resources" {
-  description = "Create Kubernetes and Helm resources."
+  description = "Create Kubernetes service account and Helm release from Terraform."
   type        = bool
   default     = false
 }

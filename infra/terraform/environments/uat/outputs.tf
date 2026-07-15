@@ -42,3 +42,14 @@ output "kubeconfig_command" {
   description = "Command for updating local kubeconfig."
   value       = "aws eks update-kubeconfig --region ${var.region} --name ${module.kubernetes.cluster_name}"
 }
+
+
+output "eks_admin_instance_id" {
+  description = "SSM-managed administration instance for the private EKS cluster."
+  value       = module.eks_admin.instance_id
+}
+
+output "platform_artifact_bucket_name" {
+  description = "S3 bucket used to transfer platform installation assets to the administration instance."
+  value       = module.s3.bucket_id
+}

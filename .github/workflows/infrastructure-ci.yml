@@ -1,4 +1,4 @@
-name: Infrastructure CI/CD
+name: Infrastructure CI/CD and Argo CD
 
 on:
   push:
@@ -519,8 +519,6 @@ jobs:
             -no-color \
             -lock-timeout=5m \
             -var-file="${{ needs.resolve-context.outputs.environment }}.tfvars" \
-            -var="environment=${{ needs.resolve-context.outputs.environment }}" \
-            -var="project_name=${PROJECT_NAME}" \
             -out=tfplan \
             | tee terraform-plan.txt
 
@@ -578,6 +576,9 @@ jobs:
 
     outputs:
       cluster_name: ${{ steps.platform-outputs.outputs.cluster_name }}
+      admin_instance_id: ${{ steps.platform-outputs.outputs.admin_instance_id }}
+      artifact_bucket: ${{ steps.platform-outputs.outputs.artifact_bucket }}
+      load_balancer_controller_role_arn: ${{ steps.platform-outputs.outputs.load_balancer_controller_role_arn }}
 
     steps:
       - name: Checkout infrastructure repository
@@ -613,66 +614,22 @@ jobs:
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true"
 
-      - name: Discover GitHub runner public CIDR
-        id: runner-network
+      - name: Download approved Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.terraform-plan.outputs.plan_artifact }}
+          path: ${{ needs.resolve-context.outputs.working_directory }}
+
+      - name: Apply approved Terraform plan
         shell: bash
         run: |
           set -euo pipefail
 
-          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '[:space:]')"
-
-          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
-            echo "Unable to determine a valid runner IPv4 address."
-            exit 1
-          }
-
-          runner_cidr="${runner_ip}/32"
-          echo "runner_cidr=$runner_cidr" >> "$GITHUB_OUTPUT"
-          echo "Using temporary EKS API CIDR: $runner_cidr"
-
-      - name: Temporarily open an existing EKS endpoint to this runner
-        id: existing-cluster
-        shell: bash
-        env:
-          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
-        run: |
-          set -euo pipefail
-
-          cluster_name="$(terraform output -raw cluster_name 2>/dev/null || true)"
-
-          if [[ -z "$cluster_name" ]]; then
-            echo "No existing EKS cluster found in Terraform state."
-            echo "cluster_name=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! aws eks describe-cluster             --region "$AWS_REGION"             --name "$cluster_name" >/dev/null 2>&1; then
-            echo "Cluster $cluster_name does not exist yet."
-            echo "cluster_name=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$cluster_name"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=true,publicAccessCidrs="$RUNNER_CIDR"             >/dev/null
-
-          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$cluster_name"
-
-          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
-
-      - name: Create runner-specific Terraform apply plan
-        shell: bash
-        env:
-          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
-        run: |
-          set -euo pipefail
-
-          terraform plan             -input=false             -no-color             -lock-timeout=5m             -var-file="${{ needs.resolve-context.outputs.environment }}.tfvars"             -var="environment=${{ needs.resolve-context.outputs.environment }}"             -var="project_name=${PROJECT_NAME}"             -var="eks_endpoint_public_access=true"             -var="eks_public_access_cidrs=[\"${RUNNER_CIDR}\"]"             -out=tfapply
-
-      - name: Apply runner-specific Terraform plan
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          terraform apply             -input=false             -auto-approve             -lock-timeout=5m             tfapply
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            -lock-timeout=5m \
+            tfplan
 
       - name: Read platform outputs
         id: platform-outputs
@@ -682,13 +639,36 @@ jobs:
           set -euo pipefail
 
           cluster_name="$(terraform output -raw cluster_name)"
+          admin_instance_id="$(terraform output -raw eks_admin_instance_id)"
+          artifact_bucket="$(terraform output -raw platform_artifact_bucket_name)"
+          load_balancer_controller_role_arn="$(terraform output -raw aws_load_balancer_controller_iam_role_arn)"
 
           test -n "$cluster_name" || {
             echo "Terraform output 'cluster_name' is required."
             exit 1
           }
 
-          echo "cluster_name=$cluster_name" >> "$GITHUB_OUTPUT"
+          test -n "$admin_instance_id" || {
+            echo "Terraform output 'eks_admin_instance_id' is required."
+            exit 1
+          }
+
+          test -n "$artifact_bucket" || {
+            echo "Terraform output 'platform_artifact_bucket_name' is required."
+            exit 1
+          }
+
+          test -n "$load_balancer_controller_role_arn" || {
+            echo "Terraform output 'aws_load_balancer_controller_iam_role_arn' is required."
+            exit 1
+          }
+
+          {
+            echo "cluster_name=$cluster_name"
+            echo "admin_instance_id=$admin_instance_id"
+            echo "artifact_bucket=$artifact_bucket"
+            echo "load_balancer_controller_role_arn=$load_balancer_controller_role_arn"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Export Terraform outputs
         if: success()
@@ -708,25 +688,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Disable the EKS public endpoint
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cluster_name="$(terraform output -raw cluster_name 2>/dev/null || true)"
-
-          if [[ -z "$cluster_name" ]]; then
-            echo "No EKS cluster output is available; nothing to close."
-            exit 0
-          fi
-
-          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$cluster_name"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=false             >/dev/null
-
-          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$cluster_name"
-
-          echo "The EKS public endpoint has been disabled."
-
       - name: Deployment summary
         if: success()
         shell: bash
@@ -741,8 +702,8 @@ jobs:
             echo "- State: \`s3://${TF_STATE_BUCKET}/${{ needs.resolve-context.outputs.state_key }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  install-argocd:
-    name: Install or upgrade Argo CD
+  install-platform-components:
+    name: Install AWS Load Balancer Controller and Argo CD through SSM
     runs-on: ubuntu-latest
 
     needs:
@@ -765,333 +726,238 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref }}
 
-      - name: Validate Argo CD installation configuration
-        shell: bash
-        env:
-          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
-        run: |
-          set -euo pipefail
-
-          test -n "$AWS_REGION" || {
-            echo "AWS_REGION is required."
-            exit 1
-          }
-
-          test -n "$ROLE_TO_ASSUME" || {
-            echo "ROLE_TO_ASSUME is required."
-            exit 1
-          }
-
-          test -n "$CLUSTER_NAME" || {
-            echo "The Terraform cluster_name output is required."
-            exit 1
-          }
-
-          test -n "$ARGOCD_CHART_VERSION" || {
-            echo "ARGOCD_CHART_VERSION GitHub variable is required."
-            exit 1
-          }
-
-          test -f "$ARGOCD_VALUES_FILE" || {
-            echo "Argo CD values file was not found: $ARGOCD_VALUES_FILE"
-            exit 1
-          }
-
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-argocd
+          role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-ssm-platform
           mask-aws-account-id: true
 
-      - name: Discover runner public CIDR
-        id: runner-network
+      - name: Validate platform installation inputs
         shell: bash
+        env:
+          ADMIN_INSTANCE_ID: ${{ needs.terraform-apply.outputs.admin_instance_id }}
+          ARTIFACT_BUCKET: ${{ needs.terraform-apply.outputs.artifact_bucket }}
+          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+          LBC_ROLE_ARN: ${{ needs.terraform-apply.outputs.load_balancer_controller_role_arn }}
         run: |
           set -euo pipefail
 
-          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '[:space:]')"
-          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || exit 1
-          echo "runner_cidr=${runner_ip}/32" >> "$GITHUB_OUTPUT"
+          test -n "$ADMIN_INSTANCE_ID"
+          test -n "$ARTIFACT_BUCKET"
+          test -n "$CLUSTER_NAME"
+          test -n "$LBC_ROLE_ARN"
+          test -n "$ARGOCD_CHART_VERSION"
+          test -f "$ARGOCD_VALUES_FILE"
 
-      - name: Temporarily allow this runner to reach the EKS API
+      - name: Wait for the administration instance to be online in Systems Manager
         shell: bash
         env:
-          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
-          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
+          ADMIN_INSTANCE_ID: ${{ needs.terraform-apply.outputs.admin_instance_id }}
         run: |
           set -euo pipefail
 
-          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=true,publicAccessCidrs="$RUNNER_CIDR"             >/dev/null
+          for attempt in $(seq 1 40); do
+            status="$(
+              aws ssm describe-instance-information \
+                --region "$AWS_REGION" \
+                --filters "Key=InstanceIds,Values=$ADMIN_INSTANCE_ID" \
+                --query 'InstanceInformationList[0].PingStatus' \
+                --output text 2>/dev/null || true
+            )"
 
-          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
+            if [[ "$status" == "Online" ]]; then
+              echo "Administration instance is online in Systems Manager."
+              exit 0
+            fi
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+            echo "Waiting for SSM registration: attempt $attempt/40"
+            sleep 15
+          done
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+          echo "Administration instance did not become available in Systems Manager."
+          exit 1
 
-      - name: Configure access to the EKS cluster
+      - name: Create the platform installation script
         shell: bash
         env:
           CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
+          LBC_ROLE_ARN: ${{ needs.terraform-apply.outputs.load_balancer_controller_role_arn }}
         run: |
+          set -euo pipefail
+
+          mkdir -p /tmp/platform-install
+
+          cp "$ARGOCD_VALUES_FILE" /tmp/platform-install/argocd-values.yaml
+
+          cat > /tmp/platform-install/install-platform.sh <<'SCRIPT'
+          #!/usr/bin/env bash
           set -euo pipefail
 
           aws eks update-kubeconfig \
-            --region "$AWS_REGION" \
-            --name "$CLUSTER_NAME"
+            --region "__AWS_REGION__" \
+            --name "__CLUSTER_NAME__" \
+            --kubeconfig /root/.kube/config
 
           kubectl cluster-info
           kubectl get nodes
 
-      - name: Add the Argo Helm repository
-        shell: bash
-        run: |
-          set -euo pipefail
+          kubectl create serviceaccount aws-load-balancer-controller \
+            --namespace kube-system \
+            --dry-run=client \
+            --output yaml |
+            kubectl apply -f -
 
-          helm repo add argo https://argoproj.github.io/argo-helm \
-            --force-update
+          kubectl annotate serviceaccount aws-load-balancer-controller \
+            --namespace kube-system \
+            eks.amazonaws.com/role-arn="__LBC_ROLE_ARN__" \
+            --overwrite
 
+          helm repo add eks https://aws.github.io/eks-charts --force-update
+          helm repo add argo https://argoproj.github.io/argo-helm --force-update
           helm repo update
 
-      - name: Validate the Argo CD Helm release
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          helm lint argo/argo-cd \
-            --version "$ARGOCD_CHART_VERSION" \
-            --values "$ARGOCD_VALUES_FILE"
-
-          helm template "$ARGOCD_RELEASE_NAME" argo/argo-cd \
-            --namespace "$ARGOCD_NAMESPACE" \
-            --version "$ARGOCD_CHART_VERSION" \
-            --values "$ARGOCD_VALUES_FILE" \
-            > /tmp/argocd-rendered.yaml
-
-          test -s /tmp/argocd-rendered.yaml
-
-      - name: Install or upgrade Argo CD with Helm
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          helm upgrade --install "$ARGOCD_RELEASE_NAME" argo/argo-cd \
-            --namespace "$ARGOCD_NAMESPACE" \
-            --create-namespace \
-            --version "$ARGOCD_CHART_VERSION" \
-            --values "$ARGOCD_VALUES_FILE" \
+          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+            --namespace kube-system \
+            --set clusterName="__CLUSTER_NAME__" \
+            --set region="__AWS_REGION__" \
+            --set serviceAccount.create=false \
+            --set serviceAccount.name=aws-load-balancer-controller \
             --atomic \
             --cleanup-on-fail \
             --wait \
             --timeout 20m
 
-      - name: Verify the Argo CD deployment
+          helm upgrade --install "__ARGOCD_RELEASE_NAME__" argo/argo-cd \
+            --namespace "__ARGOCD_NAMESPACE__" \
+            --create-namespace \
+            --version "__ARGOCD_CHART_VERSION__" \
+            --values /opt/platform-install/argocd-values.yaml \
+            --atomic \
+            --cleanup-on-fail \
+            --wait \
+            --timeout 20m
+
+          helm status aws-load-balancer-controller --namespace kube-system
+          helm status "__ARGOCD_RELEASE_NAME__" --namespace "__ARGOCD_NAMESPACE__"
+          kubectl get pods --all-namespaces
+          SCRIPT
+
+          sed -i \
+            -e "s|__AWS_REGION__|${AWS_REGION}|g" \
+            -e "s|__CLUSTER_NAME__|${CLUSTER_NAME}|g" \
+            -e "s|__LBC_ROLE_ARN__|${LBC_ROLE_ARN}|g" \
+            -e "s|__ARGOCD_RELEASE_NAME__|${ARGOCD_RELEASE_NAME}|g" \
+            -e "s|__ARGOCD_NAMESPACE__|${ARGOCD_NAMESPACE}|g" \
+            -e "s|__ARGOCD_CHART_VERSION__|${ARGOCD_CHART_VERSION}|g" \
+            /tmp/platform-install/install-platform.sh
+
+          chmod 0755 /tmp/platform-install/install-platform.sh
+
+      - name: Upload platform installation assets
         shell: bash
+        env:
+          ARTIFACT_BUCKET: ${{ needs.terraform-apply.outputs.artifact_bucket }}
         run: |
           set -euo pipefail
 
-          helm status "$ARGOCD_RELEASE_NAME" \
-            --namespace "$ARGOCD_NAMESPACE"
+          prefix="platform-install/${{ needs.resolve-context.outputs.environment }}/${GITHUB_RUN_ID}"
 
-          kubectl get deployments,statefulsets,pods,services \
-            --namespace "$ARGOCD_NAMESPACE"
+          aws s3 cp \
+            /tmp/platform-install/install-platform.sh \
+            "s3://${ARTIFACT_BUCKET}/${prefix}/install-platform.sh" \
+            --sse aws:kms
 
-          kubectl rollout status \
-            deployment/"$ARGOCD_RELEASE_NAME"-server \
-            --namespace "$ARGOCD_NAMESPACE" \
-            --timeout=10m
+          aws s3 cp \
+            /tmp/platform-install/argocd-values.yaml \
+            "s3://${ARTIFACT_BUCKET}/${prefix}/argocd-values.yaml" \
+            --sse aws:kms
 
-          kubectl rollout status \
-            deployment/"$ARGOCD_RELEASE_NAME"-repo-server \
-            --namespace "$ARGOCD_NAMESPACE" \
-            --timeout=10m
+          echo "PLATFORM_PREFIX=$prefix" >> "$GITHUB_ENV"
 
-      - name: Add Argo CD installation summary
+      - name: Install platform components through Systems Manager
+        id: ssm-command
         shell: bash
         env:
+          ADMIN_INSTANCE_ID: ${{ needs.terraform-apply.outputs.admin_instance_id }}
+          ARTIFACT_BUCKET: ${{ needs.terraform-apply.outputs.artifact_bucket }}
+        run: |
+          set -euo pipefail
+
+          parameters="$(
+            jq -n \
+              --arg bucket "$ARTIFACT_BUCKET" \
+              --arg prefix "$PLATFORM_PREFIX" \
+              '{
+                commands: [
+                  "set -euo pipefail",
+                  "mkdir -p /opt/platform-install",
+                  ("aws s3 cp s3://" + $bucket + "/" + $prefix + "/install-platform.sh /opt/platform-install/install-platform.sh"),
+                  ("aws s3 cp s3://" + $bucket + "/" + $prefix + "/argocd-values.yaml /opt/platform-install/argocd-values.yaml"),
+                  "chmod 0755 /opt/platform-install/install-platform.sh",
+                  "/opt/platform-install/install-platform.sh"
+                ]
+              }'
+          )"
+
+          command_id="$(
+            aws ssm send-command \
+              --region "$AWS_REGION" \
+              --instance-ids "$ADMIN_INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Install AWS Load Balancer Controller and Argo CD" \
+              --parameters "$parameters" \
+              --timeout-seconds 3600 \
+              --query 'Command.CommandId' \
+              --output text
+          )"
+
+          echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
+
+          aws ssm wait command-executed \
+            --region "$AWS_REGION" \
+            --command-id "$command_id" \
+            --instance-id "$ADMIN_INSTANCE_ID"
+
+      - name: Display Systems Manager command result
+        if: always()
+        shell: bash
+        env:
+          ADMIN_INSTANCE_ID: ${{ needs.terraform-apply.outputs.admin_instance_id }}
+          COMMAND_ID: ${{ steps.ssm-command.outputs.command_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${COMMAND_ID:-}" ]]; then
+            echo "No Systems Manager command ID was produced."
+            exit 1
+          fi
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$ADMIN_INSTANCE_ID" \
+            --query '{
+              Status:Status,
+              StandardOutput:StandardOutputContent,
+              StandardError:StandardErrorContent
+            }'
+
+      - name: Platform installation summary
+        if: success()
+        shell: bash
+        env:
+          ADMIN_INSTANCE_ID: ${{ needs.terraform-apply.outputs.admin_instance_id }}
           CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
         run: |
           {
-            echo "### Argo CD installed"
+            echo "### Private EKS platform installation completed"
             echo
             echo "- Environment: \`${{ needs.resolve-context.outputs.environment }}\`"
             echo "- EKS cluster: \`${CLUSTER_NAME}\`"
-            echo "- Helm release: \`${ARGOCD_RELEASE_NAME}\`"
-            echo "- Namespace: \`${ARGOCD_NAMESPACE}\`"
-            echo "- Chart version: \`${ARGOCD_CHART_VERSION}\`"
+            echo "- EKS public endpoint: \`disabled\`"
+            echo "- SSM administration instance: \`${ADMIN_INSTANCE_ID}\`"
+            echo "- AWS Load Balancer Controller: \`installed through Helm over SSM\`"
+            echo "- Argo CD: \`installed through Helm over SSM\`"
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Disable the EKS public endpoint
-        if: always()
-        shell: bash
-        env:
-          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
-        run: |
-          set -euo pipefail
-
-          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=false             >/dev/null
-
-          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
-
-  bootstrap-argocd:
-    name: Bootstrap Argo CD root application
-    runs-on: ubuntu-latest
-
-    needs:
-      - resolve-context
-      - terraform-apply
-      - install-argocd
-
-    if: >-
-      ${{
-        always() &&
-        needs.resolve-context.outputs.should_apply == 'true' &&
-        needs.install-argocd.result == 'success' &&
-        vars.BOOTSTRAP_ARGOCD == 'true'
-      }}
-
-    environment:
-      name: ${{ needs.resolve-context.outputs.environment }}
-
-    steps:
-      - name: Validate GitOps bootstrap configuration
-        shell: bash
-        env:
-          GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          test -n "$GITOPS_REPOSITORY" || {
-            echo "GITOPS_REPOSITORY is required when BOOTSTRAP_ARGOCD=true."
-            exit 1
-          }
-
-          test -n "$GITOPS_BRANCH" || {
-            echo "GITOPS_BRANCH is required."
-            exit 1
-          }
-
-          test -n "$GITOPS_TOKEN" || {
-            echo "GITOPS_TOKEN is required for a private GitOps repository."
-            exit 1
-          }
-
-      - name: Checkout GitOps repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.GITOPS_REPOSITORY }}
-          ref: ${{ env.GITOPS_BRANCH }}
-          token: ${{ secrets.GITOPS_TOKEN }}
-          path: gitops
-
-      - name: Configure AWS credentials through OIDC
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ env.ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: ${{ env.PROJECT_NAME }}-${{ needs.resolve-context.outputs.environment }}-bootstrap
-          mask-aws-account-id: true
-
-      - name: Discover runner public CIDR
-        id: runner-network
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          runner_ip="$(curl --fail --silent --show-error https://checkip.amazonaws.com | tr -d '[:space:]')"
-          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || exit 1
-          echo "runner_cidr=${runner_ip}/32" >> "$GITHUB_OUTPUT"
-
-      - name: Temporarily allow this runner to reach the EKS API
-        shell: bash
-        env:
-          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
-          RUNNER_CIDR: ${{ steps.runner-network.outputs.runner_cidr }}
-        run: |
-          set -euo pipefail
-
-          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=true,publicAccessCidrs="$RUNNER_CIDR"             >/dev/null
-
-          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Configure access to the EKS cluster
-        shell: bash
-        env:
-          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
-        run: |
-          set -euo pipefail
-
-          aws eks update-kubeconfig \
-            --region "$AWS_REGION" \
-            --name "$CLUSTER_NAME"
-
-      - name: Validate root application manifest
-        shell: bash
-        working-directory: gitops
-        run: |
-          set -euo pipefail
-
-          test -f "$GITOPS_ROOT_APPLICATION_PATH" || {
-            echo "Root application manifest was not found:"
-            echo "$GITOPS_ROOT_APPLICATION_PATH"
-            exit 1
-          }
-
-          kubectl apply \
-            --dry-run=server \
-            --namespace "$ARGOCD_NAMESPACE" \
-            --filename "$GITOPS_ROOT_APPLICATION_PATH"
-
-      - name: Bootstrap the root application
-        shell: bash
-        working-directory: gitops
-        run: |
-          set -euo pipefail
-
-          kubectl apply \
-            --namespace "$ARGOCD_NAMESPACE" \
-            --filename "$GITOPS_ROOT_APPLICATION_PATH"
-
-      - name: Verify Argo CD applications
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          kubectl wait \
-            --for=condition=Established \
-            customresourcedefinition/applications.argoproj.io \
-            --timeout=5m
-
-          kubectl get applications.argoproj.io \
-            --namespace "$ARGOCD_NAMESPACE"
-
-      - name: Add GitOps bootstrap summary
-        shell: bash
-        run: |
-          {
-            echo "### Argo CD GitOps bootstrap completed"
-            echo
-            echo "- Repository: \`${GITOPS_REPOSITORY}\`"
-            echo "- Branch: \`${GITOPS_BRANCH}\`"
-            echo "- Root application: \`${GITOPS_ROOT_APPLICATION_PATH}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Disable the EKS public endpoint
-        if: always()
-        shell: bash
-        env:
-          CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
-        run: |
-          set -euo pipefail
-
-          aws eks update-cluster-config             --region "$AWS_REGION"             --name "$CLUSTER_NAME"             --resources-vpc-config               endpointPrivateAccess=true,endpointPublicAccess=false             >/dev/null
-
-          aws eks wait cluster-active             --region "$AWS_REGION"             --name "$CLUSTER_NAME"
-

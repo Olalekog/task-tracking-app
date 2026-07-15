@@ -74,3 +74,7 @@ tags = {
   Repository  = "task-tracking-app"
   ManagedBy   = "terraform"
 }
+
+map_public_ip_on_launch = false
+
+eks_admin_instance_type = "t3.micro"

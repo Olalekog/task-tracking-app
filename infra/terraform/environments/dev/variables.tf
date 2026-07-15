@@ -387,28 +387,29 @@ variable "tags" {
 }
 
 
-variable "eks_endpoint_public_access" {
-  description = "Temporarily expose the EKS API endpoint for an approved CI runner."
-  type        = bool
-  default     = false
-}
-
 variable "eks_public_access_cidrs" {
-  description = "Restricted CIDRs permitted to reach the public EKS API endpoint."
+  description = "CIDRs allowed to reach the public EKS API endpoint."
   type        = list(string)
-  default     = []
-
-  validation {
-    condition = alltrue([
-      for cidr in var.eks_public_access_cidrs :
-      cidr != "0.0.0.0/0" && cidr != "::/0"
-    ])
-    error_message = "EKS public access cannot be open to the internet."
-  }
+  default     = ["0.0.0.0/0"]
 }
 
-variable "install_kubernetes_resources" {
-  description = "Create Kubernetes and Helm resources."
-  type        = bool
-  default     = false
+
+variable "eks_admin_instance_type" {
+  description = "Instance type for the private SSM-managed EKS administration host."
+  type        = string
+  default     = "t3.micro"
+}
+
+
+variable "kubectl_version" {
+  description = "Pinned kubectl version installed on the EKS administration host."
+  type        = string
+  default     = "v1.31.0"
+}
+
+
+variable "helm_version" {
+  description = "Pinned Helm version installed on the EKS administration host."
+  type        = string
+  default     = "v3.16.4"
 }

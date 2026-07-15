@@ -3,6 +3,7 @@ locals {
 
   eks_cluster_role_name = "${var.name}-eks-cluster-role"
   eks_node_role_name    = "${var.name}-eks-node-role"
+  eks_admin_role_name   = "${var.name}-eks-admin-role"
 
   iam_roles = {
     (local.eks_cluster_role_name) = {
@@ -28,6 +29,43 @@ locals {
         }]
       }
       managed_policy_arns = var.eks_node_policy_arns
+    }
+    (local.eks_admin_role_name) = {
+      description             = "SSM-managed administration role for the private EKS cluster"
+      create_instance_profile = true
+      assume_role_policy = {
+        Statement = [{
+          Effect = var.iam_trust_statement_effect
+          Principal = {
+            Service = var.ec2_service_principal
+          }
+          Action = var.iam_assume_role_action
+        }]
+      }
+      managed_policy_arns = [
+        "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      ]
+      inline_policies = {
+        EksAdministration = {
+          Statement = [
+            {
+              Effect = "Allow"
+              Action = [
+                "eks:DescribeCluster"
+              ]
+              Resource = "arn:aws:eks:${var.region}:*:cluster/${var.cluster_name}"
+            },
+            {
+              Effect = "Allow"
+              Action = [
+                "s3:GetObject",
+                "s3:GetObjectVersion"
+              ]
+              Resource = "${module.s3.bucket_arn}/platform-install/*"
+            }
+          ]
+        }
+      }
     }
   }
 
@@ -126,8 +164,8 @@ module "kubernetes" {
   subnet_ids                   = module.vpc.private_subnet_ids
   node_subnet_ids              = module.vpc.private_subnet_ids
   endpoint_private_access      = true
-  endpoint_public_access       = var.eks_endpoint_public_access
-  public_access_cidrs          = var.eks_public_access_cidrs
+  endpoint_public_access       = false
+  public_access_cidrs          = []
   node_group_name              = var.node_group_name
   worker_desired_size          = var.worker_desired_size
   worker_min_size              = var.worker_min_size
@@ -137,6 +175,7 @@ module "kubernetes" {
   enabled_cluster_log_types    = var.enabled_cluster_log_types
   kms_key_arn                  = module.kms.key_arn
   cluster_encryption_resources = ["secrets"]
+  admin_role_arn                = module.iam.role_arns[local.eks_admin_role_name]
   tags                         = local.tags
 
   depends_on = [module.iam, module.cloudwatch]
@@ -155,17 +194,15 @@ resource "aws_iam_openid_connect_provider" "eks" {
 
 module "aws_load_balancer_controller" {
   source = "../../modules/aws-load-balancer-controller"
-  count  = var.install_kubernetes_resources ? 1 : 0
 
-  name                         = var.name
-  cluster_name                 = module.kubernetes.cluster_name
-  region                       = var.region
-  vpc_id                       = module.vpc.vpc_id
-  oidc_provider_arn            = aws_iam_openid_connect_provider.eks.arn
-  oidc_provider_url            = module.kubernetes.cluster_oidc_issuer_url
-  service_account_name         = "aws-load-balancer-controller"
+  name              = var.name
+  cluster_name      = module.kubernetes.cluster_name
+  region            = var.region
+  vpc_id            = module.vpc.vpc_id
+  oidc_provider_arn = aws_iam_openid_connect_provider.eks.arn
+  oidc_provider_url           = module.kubernetes.cluster_oidc_issuer_url
   install_kubernetes_resources = false
-  tags                         = local.tags
+  tags              = local.tags
 
   depends_on = [module.kubernetes]
 }
@@ -175,4 +212,26 @@ module "ec2" {
 
   instances = var.ec2_instances
   tags      = local.tags
+}
+
+
+module "eks_admin" {
+  source = "../../modules/eks-admin"
+
+  name                  = var.name
+  region                = var.region
+  cluster_name          = module.kubernetes.cluster_name
+  vpc_id                = module.vpc.vpc_id
+  subnet_id             = module.vpc.private_subnet_ids[0]
+  instance_profile_name = module.iam.instance_profile_names[local.eks_admin_role_name]
+  instance_type         = var.eks_admin_instance_type
+  kms_key_arn           = module.kms.key_arn
+  kubectl_version       = var.kubectl_version
+  helm_version          = var.helm_version
+  tags                  = local.tags
+
+  depends_on = [
+    module.kubernetes,
+    module.iam,
+  ]
 }
