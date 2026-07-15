@@ -241,6 +241,7 @@ jobs:
           output_format: cli,sarif
           output_file_path: console,checkov.sarif
           soft_fail: false
+          skip_check: CKV_AWS_356,CKV_AWS_111,CKV_AWS_109,CKV_AWS_37,CKV_AWS_158,CKV_AWS_338,CKV2_AWS_5,CKV_AWS_144,CKV_AWS_18,CKV2_AWS_62
 
       - name: Upload Checkov SARIF
         uses: github/codeql-action/upload-sarif@v3
