@@ -478,21 +478,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          directory="${{ needs.resolve-context.outputs.working_directory }}"
+          echo "Current working directory: $(pwd)"
+          echo "Expected repository-relative directory: ${{ needs.resolve-context.outputs.working_directory }}"
 
-          test -d "$directory" || {
-            echo "::error::Terraform working directory does not exist: $directory"
-            echo "Repository root contents:"
-            find . -maxdepth 4 -type d | sort
+          test -f "main.tf" || {
+            echo "::error::Terraform root module was not found in the current working directory."
+            echo "Current directory: $(pwd)"
+            echo "Directory contents:"
+            find . -maxdepth 2 -print | sort
             exit 1
           }
 
-          test -f "$directory/main.tf" || {
-            echo "::error::Terraform root module was not found at: $directory/main.tf"
+          test -f "${{ needs.resolve-context.outputs.environment }}.tfvars" || {
+            echo "::error::Expected variable file was not found: ${{ needs.resolve-context.outputs.environment }}.tfvars"
             exit 1
           }
 
-          echo "Terraform working directory: $directory"
+          echo "Terraform root module and environment variable file were found."
 
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v6
