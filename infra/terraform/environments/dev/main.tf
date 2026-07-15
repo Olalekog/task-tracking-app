@@ -156,14 +156,14 @@ resource "aws_iam_openid_connect_provider" "eks" {
 module "aws_load_balancer_controller" {
   source = "../../modules/aws-load-balancer-controller"
 
-  name              = var.name
-  cluster_name      = module.kubernetes.cluster_name
-  region            = var.region
-  vpc_id            = module.vpc.vpc_id
-  oidc_provider_arn = aws_iam_openid_connect_provider.eks.arn
-  oidc_provider_url = module.kubernetes.cluster_oidc_issuer_url
+  name                         = var.name
+  cluster_name                 = module.kubernetes.cluster_name
+  region                       = var.region
+  vpc_id                       = module.vpc.vpc_id
+  oidc_provider_arn            = aws_iam_openid_connect_provider.eks.arn
+  oidc_provider_url            = module.kubernetes.cluster_oidc_issuer_url
   install_kubernetes_resources = false
-  tags              = local.tags
+  tags                         = local.tags
 
   depends_on = [module.kubernetes]
 }
