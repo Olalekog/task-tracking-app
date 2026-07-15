@@ -1,12 +1,12 @@
 provider "aws" {
   region = var.region
 
-  dynamic "assume_role" {
-    for_each = var.aws_assume_role_arn == "" ? [] : [var.aws_assume_role_arn]
+  assume_role {
+    role_arn = var.aws_assume_role_arn
+  }
 
-    content {
-      role_arn = assume_role.value
-    }
+  default_tags {
+    tags = var.tags
   }
 }
 
