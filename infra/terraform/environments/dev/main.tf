@@ -155,6 +155,7 @@ resource "aws_iam_openid_connect_provider" "eks" {
 
 module "aws_load_balancer_controller" {
   source = "../../modules/aws-load-balancer-controller"
+  count  = var.install_kubernetes_resources ? 1 : 0
 
   name                         = var.name
   cluster_name                 = module.kubernetes.cluster_name
