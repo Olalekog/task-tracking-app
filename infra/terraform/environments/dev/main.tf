@@ -120,7 +120,6 @@ module "kubernetes" {
   source = "../../modules/kubernetes"
 
   cluster_name                 = var.cluster_name
-  install_kubernetes_resources = false
   cluster_role_arn             = module.iam.role_arns[local.eks_cluster_role_name]
   node_role_arn                = module.iam.role_arns[local.eks_node_role_name]
   kubernetes_version           = var.kubernetes_version
@@ -163,6 +162,7 @@ module "aws_load_balancer_controller" {
   vpc_id            = module.vpc.vpc_id
   oidc_provider_arn = aws_iam_openid_connect_provider.eks.arn
   oidc_provider_url = module.kubernetes.cluster_oidc_issuer_url
+  install_kubernetes_resources = false
   tags              = local.tags
 
   depends_on = [module.kubernetes]
