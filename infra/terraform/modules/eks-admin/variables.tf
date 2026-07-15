@@ -8,6 +8,11 @@ variable "region" {
   type        = string
 }
 
+variable "vpc_id" {
+  description = "VPC ID where the EKS administration instance and security group are created."
+  type        = string
+}
+
 variable "cluster_name" {
   description = "EKS cluster name."
   type        = string
