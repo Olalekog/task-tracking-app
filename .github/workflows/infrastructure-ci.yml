@@ -33,23 +33,6 @@ on:
       - ".terraform.lock.hcl"
 
   workflow_dispatch:
-    inputs:
-      environment:
-        description: Environment to plan or deploy
-        required: true
-        type: choice
-        options:
-          - dev
-          - uat
-          - production
-      operation:
-        description: Terraform operation
-        required: true
-        default: plan
-        type: choice
-        options:
-          - plan
-          - apply
 
 permissions:
   contents: read
@@ -58,7 +41,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: infrastructure-${{ github.event.inputs.environment || github.base_ref || github.ref_name }}
+  group: infrastructure-${{ github.base_ref || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -96,6 +79,14 @@ jobs:
       - name: Resolve environment and operation
         id: context
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          GIT_REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          SOURCE_BRANCH: ${{ github.head_ref }}
+          TARGET_BRANCH: ${{ github.base_ref }}
+          PR_MERGED: ${{ github.event.pull_request.merged || false }}
         run: |
           set -euo pipefail
 
@@ -104,29 +95,27 @@ jobs:
           should_plan="false"
           should_apply="false"
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            environment="${{ inputs.environment }}"
-            operation="${{ inputs.operation }}"
-            should_plan="true"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            case "$REF_NAME" in
+              dev|uat|production)
+                environment="$REF_NAME"
+                operation="plan"
+                should_plan="true"
+                ;;
+              *)
+                echo "Manual runs must be started from dev, uat, or production."
+                exit 1
+                ;;
+            esac
 
-            if [[ "$operation" == "apply" ]]; then
-              should_apply="true"
-            fi
-
-          elif [[ "${{ github.event_name }}" == "push" &&
-                  "${{ github.ref }}" == "refs/heads/dev" ]]; then
+          elif [[ "$EVENT_NAME" == "push" && "$GIT_REF" == "refs/heads/dev" ]]; then
             environment="dev"
             operation="apply"
             should_plan="true"
             should_apply="true"
 
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            source="${{ github.head_ref }}"
-            target="${{ github.base_ref }}"
-            action="${{ github.event.action }}"
-            merged="${{ github.event.pull_request.merged || false }}"
-
-            case "${source}:${target}" in
+          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+            case "${SOURCE_BRANCH}:${TARGET_BRANCH}" in
               dev:uat)
                 environment="uat"
                 ;;
@@ -134,14 +123,14 @@ jobs:
                 environment="production"
                 ;;
               *)
-                echo "Invalid promotion path: ${source} -> ${target}"
+                echo "Invalid promotion path: ${SOURCE_BRANCH} -> ${TARGET_BRANCH}"
                 echo "Allowed paths are dev -> uat and uat -> production."
                 exit 1
                 ;;
             esac
 
-            if [[ "$action" == "closed" ]]; then
-              if [[ "$merged" == "true" ]]; then
+            if [[ "$EVENT_ACTION" == "closed" ]]; then
+              if [[ "$PR_MERGED" == "true" ]]; then
                 operation="apply"
                 should_plan="true"
                 should_apply="true"
@@ -165,12 +154,14 @@ jobs:
           working_directory="environments/${environment}"
           state_key="${PROJECT_NAME}/${environment}/terraform.tfstate"
 
-          echo "environment=$environment" >> "$GITHUB_OUTPUT"
-          echo "operation=$operation" >> "$GITHUB_OUTPUT"
-          echo "should_plan=$should_plan" >> "$GITHUB_OUTPUT"
-          echo "should_apply=$should_apply" >> "$GITHUB_OUTPUT"
-          echo "working_directory=$working_directory" >> "$GITHUB_OUTPUT"
-          echo "state_key=$state_key" >> "$GITHUB_OUTPUT"
+          {
+            echo "environment=$environment"
+            echo "operation=$operation"
+            echo "should_plan=$should_plan"
+            echo "should_apply=$should_apply"
+            echo "working_directory=$working_directory"
+            echo "state_key=$state_key"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "### Infrastructure workflow context"
@@ -194,13 +185,13 @@ jobs:
     steps:
       - name: Enforce branch promotion sequence
         shell: bash
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref }}
+          TARGET_BRANCH: ${{ github.base_ref }}
         run: |
           set -euo pipefail
 
-          SOURCE="${{ github.head_ref }}"
-          TARGET="${{ github.base_ref }}"
-
-          case "${SOURCE}:${TARGET}" in
+          case "${SOURCE_BRANCH}:${TARGET_BRANCH}" in
             dev:uat)
               echo "Valid infrastructure promotion: dev -> uat"
               ;;
@@ -208,7 +199,7 @@ jobs:
               echo "Valid infrastructure promotion: uat -> production"
               ;;
             *)
-              echo "Invalid infrastructure promotion: ${SOURCE} -> ${TARGET}"
+              echo "Invalid infrastructure promotion: ${SOURCE_BRANCH} -> ${TARGET_BRANCH}"
               exit 1
               ;;
           esac
