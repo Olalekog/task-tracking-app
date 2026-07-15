@@ -27,7 +27,6 @@ concurrency:
 
 env:
   DEFAULT_AWS_REGION: us-east-1
-  DEFAULT_GITOPS_BRANCH: dev
 
 jobs:
   changes:
@@ -659,7 +658,7 @@ jobs:
 
     env:
       GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
-      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH }}
       GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
       BACKEND_IMAGE: ${{ needs.build-scan-push-images.outputs.backend_image || '' }}
       FRONTEND_IMAGE: ${{ needs.build-scan-push-images.outputs.frontend_image || '' }}
@@ -803,7 +802,7 @@ jobs:
 
     env:
       GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
-      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH }}
       GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
 
     steps:
@@ -967,7 +966,7 @@ jobs:
 
     env:
       GITOPS_REPOSITORY: ${{ vars.GITOPS_REPOSITORY }}
-      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'main' }}
+      GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH }}
       GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
 
     steps:
