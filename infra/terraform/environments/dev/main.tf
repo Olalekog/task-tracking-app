@@ -163,6 +163,7 @@ module "aws_load_balancer_controller" {
   vpc_id                       = module.vpc.vpc_id
   oidc_provider_arn            = aws_iam_openid_connect_provider.eks.arn
   oidc_provider_url            = module.kubernetes.cluster_oidc_issuer_url
+  service_account_name         = "aws-load-balancer-controller"
   install_kubernetes_resources = false
   tags                         = local.tags
 
