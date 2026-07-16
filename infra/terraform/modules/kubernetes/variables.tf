@@ -90,13 +90,13 @@ variable "cluster_encryption_resources" {
 }
 
 variable "authentication_mode" {
-  description = "EKS cluster authentication mode. API_AND_CONFIG_MAP allows EKS access entries while preserving aws-auth ConfigMap compatibility."
+  description = "EKS cluster authentication mode for access entries. API_AND_CONFIG_MAP preserves aws-auth ConfigMap compatibility."
   type        = string
   default     = "API_AND_CONFIG_MAP"
 
   validation {
-    condition     = contains(["CONFIG_MAP", "API", "API_AND_CONFIG_MAP"], var.authentication_mode)
-    error_message = "authentication_mode must be one of CONFIG_MAP, API, or API_AND_CONFIG_MAP."
+    condition     = contains(["API", "API_AND_CONFIG_MAP"], var.authentication_mode)
+    error_message = "authentication_mode must be API or API_AND_CONFIG_MAP because this module creates EKS access entries."
   }
 }
 

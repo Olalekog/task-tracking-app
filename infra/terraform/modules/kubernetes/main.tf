@@ -1,3 +1,5 @@
+data "aws_region" "current" {}
+
 resource "aws_eks_cluster" "this" {
   name                      = var.cluster_name
   role_arn                  = var.cluster_role_arn
@@ -16,10 +18,6 @@ resource "aws_eks_cluster" "this" {
       key_arn = var.kms_key_arn
     }
     resources = var.cluster_encryption_resources
-  }
-
-  access_config {
-    authentication_mode = var.authentication_mode
   }
 
   tags = var.tags
@@ -46,10 +44,49 @@ resource "aws_eks_node_group" "workers" {
 }
 
 
+resource "terraform_data" "access_entry_authentication_mode" {
+  input = {
+    authentication_mode = var.authentication_mode
+    cluster_name        = aws_eks_cluster.this.name
+    region              = data.aws_region.current.name
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+
+      current_mode="$(
+        aws eks describe-cluster \
+          --name "${self.input.cluster_name}" \
+          --region "${self.input.region}" \
+          --query 'cluster.accessConfig.authenticationMode' \
+          --output text
+      )"
+
+      if [[ "$current_mode" == "API" || "$current_mode" == "API_AND_CONFIG_MAP" ]]; then
+        echo "EKS cluster authentication mode already supports access entries: $current_mode"
+        exit 0
+      fi
+
+      aws eks update-cluster-config \
+        --name "${self.input.cluster_name}" \
+        --region "${self.input.region}" \
+        --access-config "authenticationMode=${self.input.authentication_mode}"
+
+      aws eks wait cluster-active \
+        --name "${self.input.cluster_name}" \
+        --region "${self.input.region}"
+    EOT
+  }
+}
+
 resource "aws_eks_access_entry" "admin" {
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = var.admin_role_arn
   type          = "STANDARD"
+
+  depends_on = [terraform_data.access_entry_authentication_mode]
 }
 
 resource "aws_eks_access_policy_association" "admin" {
