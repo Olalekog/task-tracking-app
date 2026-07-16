@@ -50,7 +50,7 @@ resource "aws_iam_role_policy" "this" {
   for_each = { for policy in local.inline_policies : policy.key => policy }
 
   name   = each.value.policy_name
-  role   = aws_iam_role.this[each.value.role_name].id
+  role   = aws_iam_role.this[each.value.role_name].name
   policy = jsonencode(merge({ Version = var.policy_version }, each.value.policy_document))
 }
 
