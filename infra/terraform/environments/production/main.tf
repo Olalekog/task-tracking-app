@@ -7,6 +7,14 @@ locals {
 
   iam_roles = {
     (local.eks_cluster_role_name) = {
+      description             = "IAM role for the EKS control plane"
+      create_instance_profile = false
+      instance_profile_path   = "/"
+      path                    = "/"
+      max_session_duration    = 3600
+      permissions_boundary    = null
+      force_detach_policies   = false
+
       assume_role_policy = {
         Statement = [{
           Effect = var.iam_trust_statement_effect
@@ -17,8 +25,17 @@ locals {
         }]
       }
       managed_policy_arns = var.eks_cluster_policy_arns
+      inline_policies     = tomap({})
     }
     (local.eks_node_role_name) = {
+      description             = "IAM role for the EKS worker nodes"
+      create_instance_profile = false
+      instance_profile_path   = "/"
+      path                    = "/"
+      max_session_duration    = 3600
+      permissions_boundary    = null
+      force_detach_policies   = false
+
       assume_role_policy = {
         Statement = [{
           Effect = var.iam_trust_statement_effect
@@ -29,10 +46,17 @@ locals {
         }]
       }
       managed_policy_arns = var.eks_node_policy_arns
+      inline_policies     = tomap({})
     }
     (local.eks_admin_role_name) = {
       description             = "SSM-managed administration role for the private EKS cluster"
       create_instance_profile = true
+      instance_profile_path   = "/"
+      path                    = "/"
+      max_session_duration    = 3600
+      permissions_boundary    = null
+      force_detach_policies   = false
+
       assume_role_policy = {
         Statement = [{
           Effect = var.iam_trust_statement_effect
@@ -45,7 +69,7 @@ locals {
       managed_policy_arns = [
         "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
       ]
-      inline_policies = {
+      inline_policies = tomap({
         EksAdministration = {
           Statement = [
             {
@@ -65,7 +89,7 @@ locals {
             }
           ]
         }
-      }
+      })
     }
   }
 
