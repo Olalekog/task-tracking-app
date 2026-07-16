@@ -199,6 +199,7 @@ module "kubernetes" {
   endpoint_private_access      = true
   endpoint_public_access       = false
   public_access_cidrs          = []
+  vpc_cidr_block               = var.vpc_cidr
   node_group_name              = var.node_group_name
   worker_desired_size          = var.worker_desired_size
   worker_min_size              = var.worker_min_size

@@ -44,6 +44,11 @@ variable "public_access_cidrs" {
   default     = []
 }
 
+variable "vpc_cidr_block" {
+  description = "VPC CIDR block allowed to reach the private EKS API endpoint."
+  type        = string
+}
+
 variable "node_group_name" {
   description = "Managed node group name."
   type        = string

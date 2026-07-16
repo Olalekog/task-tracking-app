@@ -23,6 +23,19 @@ resource "aws_eks_cluster" "this" {
   tags = var.tags
 }
 
+resource "aws_vpc_security_group_ingress_rule" "private_endpoint_https" {
+  security_group_id = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
+  description       = "Allow HTTPS access to the private EKS API endpoint from the VPC"
+  cidr_ipv4         = var.vpc_cidr_block
+  from_port         = 443
+  ip_protocol       = "tcp"
+  to_port           = 443
+
+  tags = merge(var.tags, {
+    Name = "${var.cluster_name}-private-endpoint-https"
+  })
+}
+
 resource "aws_eks_node_group" "workers" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = var.node_group_name
