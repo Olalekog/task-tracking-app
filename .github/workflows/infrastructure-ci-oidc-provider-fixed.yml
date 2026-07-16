@@ -959,6 +959,7 @@ jobs:
             --set vpcId="__VPC_ID__" \
             --set serviceAccount.create=false \
             --set serviceAccount.name=aws-load-balancer-controller \
+            --set replicaCount=1 \
             --wait \
             --timeout 30m; then
             kubectl get pods --namespace kube-system --output wide
