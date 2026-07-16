@@ -105,6 +105,16 @@ locals {
               ]
 
               Resource = "${module.s3.bucket_arn}/platform-install/*"
+            },
+            {
+              Effect = "Allow"
+
+              Action = [
+                "kms:Decrypt",
+                "kms:DescribeKey"
+              ]
+
+              Resource = module.kms.key_arn
             }
           ]
         })

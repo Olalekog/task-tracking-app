@@ -1017,10 +1017,25 @@ jobs:
 
           echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
 
+          set +e
           aws ssm wait command-executed \
             --region "$AWS_REGION" \
             --command-id "$command_id" \
             --instance-id "$ADMIN_INSTANCE_ID"
+          wait_status=$?
+          set -e
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$command_id" \
+            --instance-id "$ADMIN_INSTANCE_ID" \
+            --query '{
+              Status:Status,
+              StandardOutput:StandardOutputContent,
+              StandardError:StandardErrorContent
+            }'
+
+          exit "$wait_status"
 
       - name: Display Systems Manager command result
         if: always()
