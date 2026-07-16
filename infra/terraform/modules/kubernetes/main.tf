@@ -51,18 +51,27 @@ resource "terraform_data" "access_entry_authentication_mode" {
     region              = data.aws_region.current.name
   }
 
+  triggers_replace = [
+    aws_eks_cluster.this.id,
+    var.admin_role_arn,
+    var.authentication_mode,
+    "verify-access-entry-authentication-mode-v2",
+  ]
+
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
 
-      current_mode="$(
+      get_authentication_mode() {
         aws eks describe-cluster \
           --name "${self.input.cluster_name}" \
           --region "${self.input.region}" \
           --query 'cluster.accessConfig.authenticationMode' \
           --output text
-      )"
+      }
+
+      current_mode="$(get_authentication_mode)"
 
       if [[ "$current_mode" == "API" || "$current_mode" == "API_AND_CONFIG_MAP" ]]; then
         echo "EKS cluster authentication mode already supports access entries: $current_mode"
@@ -77,6 +86,21 @@ resource "terraform_data" "access_entry_authentication_mode" {
       aws eks wait cluster-active \
         --name "${self.input.cluster_name}" \
         --region "${self.input.region}"
+
+      for attempt in $(seq 1 30); do
+        current_mode="$(get_authentication_mode)"
+
+        if [[ "$current_mode" == "API" || "$current_mode" == "API_AND_CONFIG_MAP" ]]; then
+          echo "EKS cluster authentication mode now supports access entries: $current_mode"
+          exit 0
+        fi
+
+        echo "Waiting for EKS authentication mode update: attempt $attempt/30, current mode is $current_mode"
+        sleep 10
+      done
+
+      echo "EKS cluster authentication mode did not become ${self.input.authentication_mode}."
+      exit 1
     EOT
   }
 }
