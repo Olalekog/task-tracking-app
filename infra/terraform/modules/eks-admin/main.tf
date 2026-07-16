@@ -51,8 +51,9 @@ resource "aws_instance" "this" {
   vpc_security_group_ids      = [aws_security_group.this.id]
   associate_public_ip_address = false
   iam_instance_profile        = var.instance_profile_name
-  ebs_optimized               = local.ebs_optimized
-  monitoring                  = true
+  # checkov:skip=CKV_AWS_135:T2 instance types (used in dev) do not support EBS optimization; ebs_optimized is computed per instance family above.
+  ebs_optimized = local.ebs_optimized
+  monitoring    = true
 
   metadata_options {
     http_endpoint               = "enabled"
