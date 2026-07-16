@@ -28,7 +28,7 @@ nat_gateway_count   = 1
 
 worker_desired_size   = 2
 worker_min_size       = 2
-worker_max_size       = 4
+worker_max_size       = 3
 worker_instance_types = ["t2.micro"]
 
 tags = {
