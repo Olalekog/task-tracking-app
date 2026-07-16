@@ -1040,13 +1040,31 @@ jobs:
 
           echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
 
-          set +e
-          aws ssm wait command-executed \
-            --region "$AWS_REGION" \
-            --command-id "$command_id" \
-            --instance-id "$ADMIN_INSTANCE_ID"
-          wait_status=$?
-          set -e
+          status="Pending"
+          for attempt in $(seq 1 130); do
+            status="$(
+              aws ssm get-command-invocation \
+                --region "$AWS_REGION" \
+                --command-id "$command_id" \
+                --instance-id "$ADMIN_INSTANCE_ID" \
+                --query 'Status' \
+                --output text
+            )"
+
+            case "$status" in
+              Success|Cancelled|TimedOut|Failed|Cancelling)
+                break
+                ;;
+              Pending|InProgress|Delayed)
+                echo "SSM platform install status: $status, attempt $attempt/130"
+                sleep 30
+                ;;
+              *)
+                echo "Unexpected SSM command status: $status"
+                sleep 30
+                ;;
+            esac
+          done
 
           aws ssm get-command-invocation \
             --region "$AWS_REGION" \
@@ -1058,7 +1076,10 @@ jobs:
               StandardError:StandardErrorContent
             }'
 
-          exit "$wait_status"
+          if [[ "$status" != "Success" ]]; then
+            echo "SSM platform install finished with status: $status"
+            exit 1
+          fi
 
       - name: Display Systems Manager command result
         if: always()
