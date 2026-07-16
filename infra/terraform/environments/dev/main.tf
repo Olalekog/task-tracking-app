@@ -271,7 +271,6 @@ module "ec2" {
 
 module "eks_admin" {
   source = "../../modules/eks-admin"
-
   name                  = var.name
   region                = var.region
   cluster_name          = module.kubernetes.cluster_name
