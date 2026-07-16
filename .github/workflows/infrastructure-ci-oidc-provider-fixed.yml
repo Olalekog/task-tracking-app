@@ -937,6 +937,14 @@ jobs:
           kubectl cluster-info
           kubectl get nodes
 
+          # EKS auto-creates a "gp2" StorageClass on every new cluster but
+          # never marks it default, and the aws-ebs-csi-driver EKS addon
+          # (installed via Terraform) does not manage StorageClass objects
+          # itself. Without a default class, PVCs with no storageClassName
+          # (e.g. the mysql/elasticsearch StatefulSets) stay Pending forever.
+          kubectl patch storageclass gp2 \
+            -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
           kubectl create serviceaccount aws-load-balancer-controller \
             --namespace kube-system \
             --dry-run=client \

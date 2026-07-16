@@ -262,6 +262,18 @@ module "aws_load_balancer_controller" {
   depends_on = [module.kubernetes]
 }
 
+module "ebs_csi_driver" {
+  source = "../../modules/ebs-csi-driver"
+
+  name              = var.name
+  cluster_name      = module.kubernetes.cluster_name
+  oidc_provider_arn = aws_iam_openid_connect_provider.eks.arn
+  oidc_provider_url = module.kubernetes.cluster_oidc_issuer_url
+  tags              = local.tags
+
+  depends_on = [module.kubernetes]
+}
+
 module "ec2" {
   source = "../../modules/ec2"
 
