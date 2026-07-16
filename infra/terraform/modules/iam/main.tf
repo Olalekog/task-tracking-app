@@ -32,9 +32,9 @@ resource "aws_iam_role" "this" {
 
   name = each.key
 
-  path                  = try(each.value.path, "/")
-  description           = try(each.value.description, null)
-  assume_role_policy    = jsonencode(merge(
+  path        = try(each.value.path, "/")
+  description = try(each.value.description, null)
+  assume_role_policy = jsonencode(merge(
     { Version = var.policy_version },
     each.value.assume_role_policy
   ))
