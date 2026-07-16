@@ -1,24 +1,24 @@
 locals {
-  managed_policy_attachments = flatten([
-    for role_name, role in var.roles : [
-      for policy_arn in try(role.managed_policy_arns, []) : {
-        key        = "${role_name}-${sha1(policy_arn)}"
+  managed_policy_attachments = merge(concat([
+    for role_name, role in var.roles : {
+      for index, policy_arn in try(role.managed_policy_arns, []) :
+      "${role_name}-${index}" => {
         role_name  = role_name
         policy_arn = policy_arn
       }
-    ]
-  ])
+    }
+  ], [{}])...)
 
-  inline_policies = flatten([
-    for role_name, role in var.roles : [
-      for policy_name, policy_document in try(role.inline_policies, {}) : {
-        key             = "${role_name}-${policy_name}"
+  inline_policies = merge(concat([
+    for role_name, role in var.roles : {
+      for policy_name, policy_document in try(role.inline_policies, {}) :
+      "${role_name}-${policy_name}" => {
         role_name       = role_name
         policy_name     = policy_name
         policy_document = policy_document
       }
-    ]
-  ])
+    }
+  ], [{}])...)
 
   instance_profiles = {
     for role_name, role in var.roles :
@@ -48,20 +48,14 @@ resource "aws_iam_role" "this" {
 }
 
 resource "aws_iam_role_policy_attachment" "this" {
-  for_each = {
-    for attachment in local.managed_policy_attachments :
-    attachment.key => attachment
-  }
+  for_each = local.managed_policy_attachments
 
   role       = aws_iam_role.this[each.value.role_name].name
   policy_arn = each.value.policy_arn
 }
 
 resource "aws_iam_role_policy" "this" {
-  for_each = {
-    for policy in local.inline_policies :
-    policy.key => policy
-  }
+  for_each = local.inline_policies
 
   name = each.value.policy_name
   role = aws_iam_role.this[each.value.role_name].name
