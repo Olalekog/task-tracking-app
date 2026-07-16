@@ -84,7 +84,7 @@ resource "aws_ssm_document" "install_tools" {
         inputs = {
           runCommand = [
             "set -euo pipefail",
-            "dnf install -y curl tar gzip unzip jq",
+            "dnf install -y tar gzip unzip jq",
             "curl -fsSLo /tmp/kubectl https://dl.k8s.io/release/${var.kubectl_version}/bin/linux/amd64/kubectl",
             "install -m 0755 /tmp/kubectl /usr/local/bin/kubectl",
             "curl -fsSLo /tmp/helm.tar.gz https://get.helm.sh/helm-${var.helm_version}-linux-amd64.tar.gz",
