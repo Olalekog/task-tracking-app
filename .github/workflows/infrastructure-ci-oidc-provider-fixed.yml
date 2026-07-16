@@ -638,6 +638,7 @@ jobs:
       admin_instance_id: ${{ steps.platform-outputs.outputs.admin_instance_id }}
       artifact_bucket: ${{ steps.platform-outputs.outputs.artifact_bucket }}
       load_balancer_controller_role_arn: ${{ steps.platform-outputs.outputs.load_balancer_controller_role_arn }}
+      vpc_id: ${{ steps.platform-outputs.outputs.vpc_id }}
 
     steps:
       - name: Checkout infrastructure repository
@@ -720,6 +721,7 @@ jobs:
           admin_instance_id="$(terraform output -raw eks_admin_instance_id)"
           artifact_bucket="$(terraform output -raw platform_artifact_bucket_name)"
           load_balancer_controller_role_arn="$(terraform output -raw aws_load_balancer_controller_iam_role_arn)"
+          vpc_id="$(terraform output -raw vpc_id)"
 
           test -n "$cluster_name" || {
             echo "Terraform output 'cluster_name' is required."
@@ -741,11 +743,17 @@ jobs:
             exit 1
           }
 
+          test -n "$vpc_id" || {
+            echo "Terraform output 'vpc_id' is required."
+            exit 1
+          }
+
           {
             echo "cluster_name=$cluster_name"
             echo "admin_instance_id=$admin_instance_id"
             echo "artifact_bucket=$artifact_bucket"
             echo "load_balancer_controller_role_arn=$load_balancer_controller_role_arn"
+            echo "vpc_id=$vpc_id"
           } >> "$GITHUB_OUTPUT"
 
       - name: Export Terraform outputs
@@ -819,6 +827,7 @@ jobs:
           ARTIFACT_BUCKET: ${{ needs.terraform-apply.outputs.artifact_bucket }}
           CLUSTER_NAME: ${{ needs.terraform-apply.outputs.cluster_name }}
           LBC_ROLE_ARN: ${{ needs.terraform-apply.outputs.load_balancer_controller_role_arn }}
+          VPC_ID: ${{ needs.terraform-apply.outputs.vpc_id }}
           ENVIRONMENT_NAME: ${{ needs.resolve-context.outputs.environment }}
         run: |
           set -euo pipefail
@@ -847,6 +856,7 @@ jobs:
           require_value "ARTIFACT_BUCKET" "$ARTIFACT_BUCKET"
           require_value "CLUSTER_NAME" "$CLUSTER_NAME"
           require_value "LBC_ROLE_ARN" "$LBC_ROLE_ARN"
+          require_value "VPC_ID" "$VPC_ID"
 
           if [[ ! -f "$ARGOCD_VALUES_FILE" ]]; then
             echo "::error::ARGOCD_VALUES_FILE was not found: $ARGOCD_VALUES_FILE"
@@ -858,6 +868,7 @@ jobs:
             echo "ARTIFACT_BUCKET=$ARTIFACT_BUCKET"
             echo "CLUSTER_NAME=$CLUSTER_NAME"
             echo "LBC_ROLE_ARN=$LBC_ROLE_ARN"
+            echo "VPC_ID=$VPC_ID"
           } >> "$GITHUB_ENV"
 
       - name: Wait for the administration instance to be online in Systems Manager
@@ -941,16 +952,21 @@ jobs:
           helm repo add argo https://argoproj.github.io/argo-helm --force-update
           helm repo update
 
-          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+          if ! helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
             --namespace kube-system \
             --set clusterName="__CLUSTER_NAME__" \
             --set region="__AWS_REGION__" \
+            --set vpcId="__VPC_ID__" \
             --set serviceAccount.create=false \
             --set serviceAccount.name=aws-load-balancer-controller \
-            --atomic \
-            --cleanup-on-fail \
             --wait \
-            --timeout 20m
+            --timeout 30m; then
+            kubectl get pods --namespace kube-system --output wide
+            kubectl describe deployment aws-load-balancer-controller --namespace kube-system || true
+            kubectl get events --namespace kube-system --sort-by=.lastTimestamp | tail -n 80 || true
+            kubectl logs --namespace kube-system deployment/aws-load-balancer-controller --all-containers=true --tail=200 || true
+            exit 1
+          fi
 
           argocd_version_args=()
           if [[ -n "__ARGOCD_CHART_VERSION__" ]]; then
@@ -976,6 +992,7 @@ jobs:
             -e "s|__AWS_REGION__|${AWS_REGION}|g" \
             -e "s|__CLUSTER_NAME__|${CLUSTER_NAME}|g" \
             -e "s|__LBC_ROLE_ARN__|${LBC_ROLE_ARN}|g" \
+            -e "s|__VPC_ID__|${VPC_ID}|g" \
             -e "s|__ARGOCD_RELEASE_NAME__|${ARGOCD_RELEASE_NAME}|g" \
             -e "s|__ARGOCD_NAMESPACE__|${ARGOCD_NAMESPACE}|g" \
             -e "s|__ARGOCD_CHART_VERSION__|${ARGOCD_CHART_VERSION}|g" \
