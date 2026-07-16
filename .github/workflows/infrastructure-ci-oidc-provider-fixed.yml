@@ -915,10 +915,13 @@ jobs:
           kubectl version --client
           helm version
 
+          mkdir -p /root/.kube
+          export KUBECONFIG=/root/.kube/config
+
           aws eks update-kubeconfig \
             --region "__AWS_REGION__" \
             --name "__CLUSTER_NAME__" \
-            --kubeconfig /root/.kube/config
+            --kubeconfig "$KUBECONFIG"
 
           kubectl cluster-info
           kubectl get nodes
