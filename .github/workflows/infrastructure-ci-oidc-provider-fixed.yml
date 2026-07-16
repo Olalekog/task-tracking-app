@@ -969,6 +969,33 @@ jobs:
             exit 1
           fi
 
+          # The controller briefly serves a self-signed bootstrap cert before
+          # hot-swapping to the persisted webhook TLS secret, so a pod passing
+          # --wait's readiness check does not guarantee the webhook TLS is
+          # ready yet. Actively probe it with a throwaway dry-run Service
+          # (which routes through the same mutating webhook ArgoCD's install
+          # will hit) before proceeding.
+          webhook_ready=false
+          for attempt in $(seq 1 24); do
+            if kubectl create service clusterip webhook-warmup-check \
+              --tcp=80:80 \
+              --namespace kube-system \
+              --dry-run=server \
+              --output name >/dev/null 2>&1; then
+              webhook_ready=true
+              break
+            fi
+            echo "Waiting for aws-load-balancer-webhook to accept requests: attempt ${attempt}/24"
+            sleep 5
+          done
+
+          if [[ "${webhook_ready}" != "true" ]]; then
+            echo "::error::aws-load-balancer-webhook did not become ready in time"
+            kubectl get pods --namespace kube-system --output wide
+            kubectl logs --namespace kube-system deployment/aws-load-balancer-controller --all-containers=true --tail=200 || true
+            exit 1
+          fi
+
           argocd_version_args=()
           if [[ -n "__ARGOCD_CHART_VERSION__" ]]; then
             argocd_version_args=(--version "__ARGOCD_CHART_VERSION__")
