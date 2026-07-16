@@ -70,7 +70,8 @@ locals {
         "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
       ]
       inline_policies = tomap({
-        EksAdministration = {
+        EksAdministration = jsonencode({
+          Version = var.iam_policy_version
           Statement = [
             {
               Effect = "Allow"
@@ -88,7 +89,7 @@ locals {
               Resource = "${module.s3.bucket_arn}/platform-install/*"
             }
           ]
-        }
+        })
       })
     }
   }

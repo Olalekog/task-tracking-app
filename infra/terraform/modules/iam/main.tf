@@ -11,11 +11,11 @@ locals {
 
   inline_policies = merge(concat([
     for role_name, role in var.roles : {
-      for policy_name, policy_document in role.inline_policies :
+      for policy_name, policy_json in role.inline_policies :
       "${role_name}-${policy_name}" => {
-        role_name       = role_name
-        policy_name     = policy_name
-        policy_document = policy_document
+        role_name   = role_name
+        policy_name = policy_name
+        policy_json = policy_json
       }
     }
   ], [{}])...)
@@ -60,12 +60,7 @@ resource "aws_iam_role_policy" "this" {
   name = each.value.policy_name
   role = aws_iam_role.this[each.value.role_name].name
 
-  policy = jsonencode(
-    merge(
-      { Version = var.policy_version },
-      each.value.policy_document
-    )
-  )
+  policy = each.value.policy_json
 }
 
 resource "aws_iam_instance_profile" "this" {

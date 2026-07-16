@@ -5,7 +5,7 @@ variable "roles" {
     create_instance_profile = optional(bool, false)
     description             = optional(string)
     force_detach_policies   = optional(bool, false)
-    inline_policies         = optional(map(any), {})
+    inline_policies         = optional(map(string), {})
     instance_profile_path   = optional(string, "/")
     managed_policy_arns     = optional(list(string), [])
     max_session_duration    = optional(number, 3600)
