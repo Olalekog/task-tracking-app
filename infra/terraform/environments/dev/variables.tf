@@ -244,7 +244,7 @@ variable "eks_node_policy_arns" {
 variable "kubernetes_version" {
   description = "Kubernetes version."
   type        = string
-  default     = "1.31"
+  default     = "1.32"
 }
 
 variable "endpoint_private_access" {
