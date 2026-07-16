@@ -38,6 +38,12 @@ resource "aws_security_group" "this" {
   # existing DNS rules and tags
 }
 
+locals {
+  # T2 instances do not support EBS optimization; all other current
+  # generations (T3+, M-, C-, R- families, etc.) are EBS-optimized by default.
+  ebs_optimized = !startswith(var.instance_type, "t2.")
+}
+
 resource "aws_instance" "this" {
   ami                         = data.aws_ami.amazon_linux_2023.id
   instance_type               = var.instance_type
@@ -45,7 +51,7 @@ resource "aws_instance" "this" {
   vpc_security_group_ids      = [aws_security_group.this.id]
   associate_public_ip_address = false
   iam_instance_profile        = var.instance_profile_name
-  ebs_optimized               = true
+  ebs_optimized               = local.ebs_optimized
   monitoring                  = true
 
   metadata_options {

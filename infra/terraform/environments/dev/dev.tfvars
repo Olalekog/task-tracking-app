@@ -39,5 +39,4 @@ tags = {
 
 map_public_ip_on_launch = false
 
-
 eks_admin_instance_type = "t2.micro"
