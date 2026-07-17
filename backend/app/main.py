@@ -1,6 +1,7 @@
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from prometheus_client import Counter
+from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+tasks_created_total = Counter("task_tracking_tasks_created_total", "Tasks created")
+tasks_updated_total = Counter("task_tracking_tasks_updated_total", "Tasks updated")
+tasks_deleted_total = Counter("task_tracking_tasks_deleted_total", "Tasks deleted")
+
 
 @app.on_event("startup")
 def startup() -> None:
@@ -29,11 +36,6 @@ def startup() -> None:
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/metrics", response_class=PlainTextResponse)
-def metrics() -> str:
-    return "# HELP task_tracking_api_up API availability\n# TYPE task_tracking_api_up gauge\ntask_tracking_api_up 1\n"
 
 
 @app.get("/tasks", response_model=list[TaskRead])
@@ -49,6 +51,7 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> Task:
     db.add(task)
     db.commit()
     db.refresh(task)
+    tasks_created_total.inc()
     return task
 
 
@@ -64,6 +67,7 @@ def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)
 
     db.commit()
     db.refresh(task)
+    tasks_updated_total.inc()
     return task
 
 
@@ -76,4 +80,5 @@ def delete_task(task_id: int, db: Session = Depends(get_db)) -> Response:
 
     db.delete(task)
     db.commit()
+    tasks_deleted_total.inc()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

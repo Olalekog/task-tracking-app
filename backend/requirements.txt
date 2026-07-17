@@ -4,3 +4,4 @@ SQLAlchemy>=2.0.36
 PyMySQL>=1.1.1
 pydantic-settings>=2.7.1
 cryptography>=48.0.1
+prometheus-fastapi-instrumentator>=7.0.0
